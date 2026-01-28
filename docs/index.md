@@ -158,6 +158,33 @@ async for msg in query(
 
 [Structured outputs documentation](./structured-outputs.md)
 
+### Desktop Execution
+
+Route tool execution to a user's local desktop via Pool Manager:
+
+```python
+from isa_agent_sdk import query, ISAAgentOptions, ExecutionEnv
+
+options = ISAAgentOptions(
+    env=ExecutionEnv.DESKTOP,
+    user_id="xenodennis",
+    allowed_tools=["read_file", "write_file", "bash_execute", "glob_files"]
+)
+
+async for msg in query("Find all Python files and search for 'API'", options=options):
+    if msg.is_tool_use:
+        print(f"[Executing on desktop: {msg.tool_name}]")
+    elif msg.is_text:
+        print(msg.content, end="")
+```
+
+The LLM intelligently decides which tools to use, and all tool calls are routed through:
+```
+SDK → Pool Manager → Desktop Agent → Local Filesystem
+```
+
+[Desktop execution documentation](./desktop-execution.md)
+
 ### Durable Execution
 
 Checkpoint and resume long-running tasks:
