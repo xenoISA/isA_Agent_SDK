@@ -1,0 +1,113 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "isa-agent-sdk"
+version = "0.1.0"
+description = "isA Agent SDK - Build AI agents with human-in-the-loop capabilities, MCP integration, and advanced features"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10"
+authors = [
+    {name = "isA Team", email = "support@isa-agent.com"}
+]
+keywords = [
+    "ai", "agent", "sdk", "llm", "claude", "anthropic",
+    "human-in-the-loop", "mcp", "model-context-protocol",
+    "langchain", "langgraph"
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+
+dependencies = [
+    # Core
+    "httpx>=0.26.0",
+    "pydantic>=2.0.0",
+    "pydantic-settings>=2.0.0",
+
+    # isA Platform Libraries
+    "isa-common>=0.3.0",   # Shared utilities (Consul, Postgres, Loki, etc.)
+    "isa-mcp>=1.0.0",      # MCP client for tool execution
+    "isa-model>=0.5.0",    # Model service client for LLM calls
+
+    # LangChain/LangGraph for agent execution
+    "langchain-core>=0.1.0",
+    "langgraph>=0.0.40",
+    "langchain-anthropic>=0.1.0",
+    "langchain-openai>=0.1.0",
+
+    # Async/concurrency
+    "anyio>=4.0.0",
+    "aiofiles>=23.0.0",
+    "aiohttp>=3.9.0",
+
+    # Utilities
+    "rich>=13.0.0",
+    "python-dotenv>=1.0.0",
+    "psutil>=5.9.0",
+]
+
+[project.optional-dependencies]
+# For building FastAPI services with the SDK
+server = [
+    "fastapi>=0.109.0",
+    "uvicorn>=0.27.0",
+    "sse-starlette>=1.6.5",
+    "python-multipart>=0.0.6",
+]
+
+# For development
+dev = [
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.21.0",
+    "pytest-cov>=4.0.0",
+    "black>=23.0.0",
+    "ruff>=0.1.0",
+    "mypy>=1.0.0",
+]
+
+# All optional dependencies
+all = [
+    "isa-agent-sdk[server,dev]",
+]
+
+[project.urls]
+Homepage = "https://github.com/isa-agent/sdk"
+Documentation = "https://docs.isa-agent.com/sdk"
+Repository = "https://github.com/isa-agent/sdk"
+Issues = "https://github.com/isa-agent/sdk/issues"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["isa_agent_sdk*"]
+
+[tool.setuptools.package-data]
+"*" = ["*.json", "*.yaml", "*.yml", "*.md"]
+
+[tool.black]
+line-length = 100
+target-version = ["py310", "py311", "py312"]
+
+[tool.ruff]
+line-length = 100
+select = ["E", "F", "I", "N", "W"]
+ignore = ["E501"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
+ignore_missing_imports = true
