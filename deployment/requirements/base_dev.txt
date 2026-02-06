@@ -1,0 +1,14 @@
+# =============================================================================
+# ISA Agent SDK Base - Development (Editable)
+# =============================================================================
+# ISA packages installed in EDITABLE mode from local paths.
+#
+# Usage: pip install -r base_dev.txt
+# =============================================================================
+
+# =============================================================================
+# ISA Platform (Editable - Local Development)
+# =============================================================================
+-e /Users/xenodennis/Documents/Fun/isA/isA_Cloud/isA_common
+-e /Users/xenodennis/Documents/Fun/isA/isA_MCP
+-e /Users/xenodennis/Documents/Fun/isA/isA_Model
