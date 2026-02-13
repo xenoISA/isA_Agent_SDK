@@ -572,17 +572,17 @@ class AgentExecutorNode(BaseNode):
         
         self.stream_tool("parallel_execution", f"Starting parallel execution of {len(parallel_batch)} tasks")
         
-        # Execute tasks concurrently
-        tasks = []
+        # Execute tasks concurrently using explicit Tasks for clean cancellation
+        task_futures = []
         for i, task in enumerate(parallel_batch):
             task_index = current_index + i + 1
             coroutine = self._execute_single_task(task, task_index, len(task_list), config)
-            tasks.append(coroutine)
-        
+            task_futures.append(asyncio.create_task(coroutine))
+
         try:
             # Wait for all tasks to complete with timeout
             results = await asyncio.wait_for(
-                asyncio.gather(*tasks, return_exceptions=True),
+                asyncio.gather(*task_futures, return_exceptions=True),
                 timeout=self.task_timeout
             )
             
@@ -630,6 +630,13 @@ class AgentExecutorNode(BaseNode):
             })
             
         except asyncio.TimeoutError:
+            # Cancel any still-running tasks
+            for t in task_futures:
+                if not t.done():
+                    t.cancel()
+            # Wait for cancellation to complete
+            await asyncio.gather(*task_futures, return_exceptions=True)
+
             # Handle timeout
             timeout_msg = f"⏱️ **Parallel Execution Timeout**\n"
             timeout_msg += f"Batch of {len(parallel_batch)} tasks exceeded {self.task_timeout}s timeout"

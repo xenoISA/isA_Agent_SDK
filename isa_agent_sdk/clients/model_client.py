@@ -93,6 +93,14 @@ class ModelClient:
         if self._initialized:
             return True
 
+        async with self._lock:
+            # Double-check after acquiring lock
+            if self._initialized:
+                return True
+            return await self._initialize_locked()
+
+    async def _initialize_locked(self) -> bool:
+        """Initialize backend (must be called under self._lock)."""
         mode = self.config.mode
 
         if mode == ModelMode.SERVICE:
@@ -328,8 +336,10 @@ class ModelClient:
                     logger.warning("[SERVICE] DeepSeek unavailable, fell back to gpt-5-nano")
                     return ai_message, billing
                 except (ConnectionError, OSError, ValueError, asyncio.TimeoutError) as fallback_error:
-                    raise RuntimeError(f"Model error: {err}; fallback error: {fallback_error}")
-            raise RuntimeError(f"Model error: {str(e)}")
+                    raise RuntimeError(
+                        f"Model error (primary and fallback failed): {type(fallback_error).__name__}"
+                    )
+            raise RuntimeError(f"Model call failed: {type(e).__name__}")
 
     async def _call_model_direct(
         self,

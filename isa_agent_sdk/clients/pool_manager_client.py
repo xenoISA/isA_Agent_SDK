@@ -12,10 +12,13 @@ Provides interface to pool_manager service for:
 import logging
 import asyncio
 import json
+import re
 from typing import Dict, Any, Optional, AsyncIterator
 import aiohttp
 
 logger = logging.getLogger(__name__)
+
+_POOL_TYPE_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
 
 
 class PoolManagerClient:
@@ -51,6 +54,15 @@ class PoolManagerClient:
 
         logger.info(f"PoolManagerClient initialized: {pool_manager_url}")
 
+    @staticmethod
+    def _validate_pool_type(pool_type: str) -> None:
+        """Validate pool_type to prevent path traversal/injection."""
+        if not _POOL_TYPE_RE.match(pool_type):
+            raise ValueError(
+                f"Invalid pool_type '{pool_type}'. "
+                "Must contain only alphanumeric characters, hyphens, and underscores."
+            )
+
     async def _get_session(self) -> aiohttp.ClientSession:
         """Get or create aiohttp session"""
         if self._session is None or self._session.closed:
@@ -78,6 +90,7 @@ class PoolManagerClient:
         Returns:
             VM instance info with instance_id
         """
+        self._validate_pool_type(pool_type)
         session = await self._get_session()
 
         payload = {
@@ -128,6 +141,7 @@ class PoolManagerClient:
         Returns:
             Query result with response and metadata
         """
+        self._validate_pool_type(pool_type)
         session = await self._get_session()
 
         payload = {
@@ -175,6 +189,7 @@ class PoolManagerClient:
         Yields:
             Streaming response chunks (tokens, tool calls, etc.)
         """
+        self._validate_pool_type(pool_type)
         session = await self._get_session()
 
         payload = {
@@ -288,6 +303,7 @@ class PoolManagerClient:
         Returns:
             True if released successfully
         """
+        self._validate_pool_type(pool_type)
         session = await self._get_session()
 
         try:

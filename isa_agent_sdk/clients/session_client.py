@@ -22,7 +22,7 @@ import sqlite3
 import uuid
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -57,7 +57,7 @@ class Message:
             id=data.get("id", str(uuid.uuid4())),
             role=data["role"],
             content=data["content"],
-            timestamp=datetime.fromisoformat(data["timestamp"]) if "timestamp" in data else datetime.utcnow(),
+            timestamp=datetime.fromisoformat(data["timestamp"]) if "timestamp" in data else datetime.now(timezone.utc),
             metadata=data.get("metadata", {})
         )
 
@@ -92,8 +92,8 @@ class Session:
             id=data["id"],
             user_id=data.get("user_id", "default"),
             title=data.get("title", "Untitled Session"),
-            created_at=datetime.fromisoformat(data["created_at"]) if "created_at" in data else datetime.utcnow(),
-            updated_at=datetime.fromisoformat(data["updated_at"]) if "updated_at" in data else datetime.utcnow(),
+            created_at=datetime.fromisoformat(data["created_at"]) if "created_at" in data else datetime.now(timezone.utc),
+            updated_at=datetime.fromisoformat(data["updated_at"]) if "updated_at" in data else datetime.now(timezone.utc),
             messages=[Message.from_dict(m) for m in data.get("messages", [])],
             context=data.get("context", {}),
             metadata=data.get("metadata", {})
@@ -180,6 +180,7 @@ class LocalSessionBackend(SessionBackend):
         self.storage_path = Path(config.local_storage_path)
         self.db_path = self.storage_path / config.local_db_name
         self._conn: Optional[sqlite3.Connection] = None
+        self._db_lock = asyncio.Lock()
 
     async def initialize(self) -> bool:
         """Initialize SQLite database"""
@@ -199,6 +200,12 @@ class LocalSessionBackend(SessionBackend):
 
         except Exception as e:
             logger.error(f"Failed to initialize LocalSessionBackend: {e}")
+            if self._conn:
+                try:
+                    self._conn.close()
+                except Exception:
+                    pass
+                self._conn = None
             return False
 
     def _create_tables(self):
@@ -267,7 +274,7 @@ class LocalSessionBackend(SessionBackend):
     ) -> Session:
         """Create a new session"""
         session_id = f"session_{uuid.uuid4().hex[:12]}"
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
 
         session = Session(
             id=session_id,
@@ -278,20 +285,21 @@ class LocalSessionBackend(SessionBackend):
             metadata=metadata or {}
         )
 
-        cursor = self._conn.cursor()
-        cursor.execute("""
-            INSERT INTO sessions (id, user_id, title, created_at, updated_at, context, metadata)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        """, (
-            session.id,
-            session.user_id,
-            session.title,
-            session.created_at.isoformat(),
-            session.updated_at.isoformat(),
-            json.dumps(session.context),
-            json.dumps(session.metadata)
-        ))
-        self._conn.commit()
+        async with self._db_lock:
+            cursor = self._conn.cursor()
+            cursor.execute("""
+                INSERT INTO sessions (id, user_id, title, created_at, updated_at, context, metadata)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, (
+                session.id,
+                session.user_id,
+                session.title,
+                session.created_at.isoformat(),
+                session.updated_at.isoformat(),
+                json.dumps(session.context),
+                json.dumps(session.metadata)
+            ))
+            self._conn.commit()
 
         logger.info(f"Created session: {session_id}")
         return session
@@ -321,39 +329,40 @@ class LocalSessionBackend(SessionBackend):
 
     async def update_session(self, session: Session) -> bool:
         """Update session"""
-        session.updated_at = datetime.utcnow()
+        session.updated_at = datetime.now(timezone.utc)
 
-        cursor = self._conn.cursor()
-        cursor.execute("""
-            UPDATE sessions SET
-                title = ?,
-                updated_at = ?,
-                context = ?,
-                metadata = ?
-            WHERE id = ?
-        """, (
-            session.title,
-            session.updated_at.isoformat(),
-            json.dumps(session.context),
-            json.dumps(session.metadata),
-            session.id
-        ))
-        self._conn.commit()
-
-        return cursor.rowcount > 0
+        async with self._db_lock:
+            cursor = self._conn.cursor()
+            cursor.execute("""
+                UPDATE sessions SET
+                    title = ?,
+                    updated_at = ?,
+                    context = ?,
+                    metadata = ?
+                WHERE id = ?
+            """, (
+                session.title,
+                session.updated_at.isoformat(),
+                json.dumps(session.context),
+                json.dumps(session.metadata),
+                session.id
+            ))
+            self._conn.commit()
+            return cursor.rowcount > 0
 
     async def delete_session(self, session_id: str) -> bool:
         """Delete session and its messages"""
-        cursor = self._conn.cursor()
+        async with self._db_lock:
+            cursor = self._conn.cursor()
 
-        # Delete messages first (foreign key)
-        cursor.execute("DELETE FROM messages WHERE session_id = ?", (session_id,))
+            # Delete messages first (foreign key)
+            cursor.execute("DELETE FROM messages WHERE session_id = ?", (session_id,))
 
-        # Delete session
-        cursor.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
-        self._conn.commit()
+            # Delete session
+            cursor.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
+            self._conn.commit()
 
-        return cursor.rowcount > 0
+            return cursor.rowcount > 0
 
     async def list_sessions(
         self,
@@ -400,25 +409,26 @@ class LocalSessionBackend(SessionBackend):
             metadata=metadata or {}
         )
 
-        cursor = self._conn.cursor()
-        cursor.execute("""
-            INSERT INTO messages (id, session_id, role, content, timestamp, metadata)
-            VALUES (?, ?, ?, ?, ?, ?)
-        """, (
-            message.id,
-            session_id,
-            message.role,
-            message.content,
-            message.timestamp.isoformat(),
-            json.dumps(message.metadata)
-        ))
+        async with self._db_lock:
+            cursor = self._conn.cursor()
+            cursor.execute("""
+                INSERT INTO messages (id, session_id, role, content, timestamp, metadata)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, (
+                message.id,
+                session_id,
+                message.role,
+                message.content,
+                message.timestamp.isoformat(),
+                json.dumps(message.metadata)
+            ))
 
-        # Update session updated_at
-        cursor.execute("""
-            UPDATE sessions SET updated_at = ? WHERE id = ?
-        """, (datetime.utcnow().isoformat(), session_id))
+            # Update session updated_at
+            cursor.execute("""
+                UPDATE sessions SET updated_at = ? WHERE id = ?
+            """, (datetime.now(timezone.utc).isoformat(), session_id))
 
-        self._conn.commit()
+            self._conn.commit()
         return message
 
     async def get_messages(
@@ -512,7 +522,7 @@ class CloudSessionBackend(SessionBackend):
         """Create session via isa_user API"""
         result = self._user_client.create_session(
             user_id=user_id,
-            title=title or f"Session {datetime.utcnow().strftime('%Y-%m-%d %H:%M')}",
+            title=title or f"Session {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M')}",
             metadata=metadata or {},
             auth_token=self.auth_token
         )
@@ -550,7 +560,7 @@ class CloudSessionBackend(SessionBackend):
                 id=m.get("id", str(uuid.uuid4())),
                 role=m.get("role", "user"),
                 content=m.get("content", ""),
-                timestamp=datetime.fromisoformat(m["timestamp"]) if "timestamp" in m else datetime.utcnow(),
+                timestamp=datetime.fromisoformat(m["timestamp"]) if "timestamp" in m else datetime.now(timezone.utc),
                 metadata=m.get("metadata", {})
             )
             for m in messages_data
@@ -598,8 +608,8 @@ class CloudSessionBackend(SessionBackend):
                 id=data.get("session_id") or data.get("id"),
                 user_id=user_id,
                 title=data.get("title", f"Session {data.get('session_id', '')[:8]}"),
-                created_at=datetime.fromisoformat(data["created_at"]) if "created_at" in data else datetime.utcnow(),
-                updated_at=datetime.fromisoformat(data["last_activity"]) if "last_activity" in data else datetime.utcnow(),
+                created_at=datetime.fromisoformat(data["created_at"]) if "created_at" in data else datetime.now(timezone.utc),
+                updated_at=datetime.fromisoformat(data["last_activity"]) if "last_activity" in data else datetime.now(timezone.utc),
                 metadata=data.get("metadata", {})
             ))
 
@@ -653,7 +663,7 @@ class CloudSessionBackend(SessionBackend):
                 id=m.get("id", str(uuid.uuid4())),
                 role=m.get("role", "user"),
                 content=m.get("content", ""),
-                timestamp=datetime.fromisoformat(m["timestamp"]) if "timestamp" in m else datetime.utcnow(),
+                timestamp=datetime.fromisoformat(m["timestamp"]) if "timestamp" in m else datetime.now(timezone.utc),
                 metadata=m.get("metadata", {})
             ))
 
