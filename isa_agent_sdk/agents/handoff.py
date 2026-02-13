@@ -15,6 +15,15 @@ from .swarm_types import HandoffAction, HandoffResult, SwarmAgent
 
 logger = logging.getLogger(__name__)
 
+# Directive patterns that must be stripped from injected content
+_DIRECTIVE_STRIP_RE = re.compile(r"\[(?:HANDOFF:[^\]]*|COMPLETE)\]", re.IGNORECASE)
+
+
+def _sanitize_prompt_text(text: str) -> str:
+    """Strip handoff/complete directives from text to prevent prompt injection."""
+    return _DIRECTIVE_STRIP_RE.sub("", text).strip()
+
+
 # Pattern: [HANDOFF: agent_name] optional reason text
 _HANDOFF_RE = re.compile(
     r"\[HANDOFF:\s*([^\]]+?)\s*\]\s*(.*)",
@@ -44,7 +53,9 @@ def build_handoff_system_prompt_section(
     for peer in peers:
         if peer.name == current_agent_name:
             continue
-        peer_lines.append(f"- **{peer.name}**: {peer.effective_description}")
+        safe_name = _sanitize_prompt_text(peer.name)
+        safe_desc = _sanitize_prompt_text(peer.effective_description)
+        peer_lines.append(f"- **{safe_name}**: {safe_desc}")
 
     if not peer_lines:
         return ""

@@ -25,7 +25,7 @@ import sqlite3
 import uuid
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, BinaryIO, Dict, List, Optional, Union
 
@@ -72,8 +72,8 @@ class FileInfo:
             content_type=data.get("content_type", "application/octet-stream"),
             size=data.get("size", 0),
             user_id=data.get("user_id", "default"),
-            created_at=datetime.fromisoformat(data["created_at"]) if "created_at" in data else datetime.utcnow(),
-            updated_at=datetime.fromisoformat(data["updated_at"]) if "updated_at" in data else datetime.utcnow(),
+            created_at=datetime.fromisoformat(data["created_at"]) if "created_at" in data else datetime.now(timezone.utc),
+            updated_at=datetime.fromisoformat(data["updated_at"]) if "updated_at" in data else datetime.now(timezone.utc),
             metadata=data.get("metadata", {}),
             tags=data.get("tags", []),
             path=data.get("path")
@@ -207,6 +207,7 @@ class LocalStorageBackend(StorageBackend):
         self.db_path = self.storage_path / config.local_db_name
         self._conn: Optional[sqlite3.Connection] = None
         self._embedder = None
+        self._db_lock = asyncio.Lock()
 
     async def initialize(self) -> bool:
         """Initialize storage"""
@@ -230,6 +231,12 @@ class LocalStorageBackend(StorageBackend):
 
         except Exception as e:
             logger.error(f"Failed to initialize LocalStorageBackend: {e}")
+            if self._conn:
+                try:
+                    self._conn.close()
+                except Exception:
+                    pass
+                self._conn = None
             return False
 
     def _create_tables(self):
@@ -339,7 +346,7 @@ class LocalStorageBackend(StorageBackend):
     ) -> FileInfo:
         """Upload a file"""
         file_id = f"file_{uuid.uuid4().hex[:12]}"
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
 
         # Detect content type if not provided
         if content_type is None:
@@ -369,35 +376,36 @@ class LocalStorageBackend(StorageBackend):
         )
 
         # Save to database
-        cursor = self._conn.cursor()
-        cursor.execute("""
-            INSERT INTO files (id, filename, content_type, size, user_id, created_at, updated_at, metadata, tags, path, content_text)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (
-            file_info.id,
-            file_info.filename,
-            file_info.content_type,
-            file_info.size,
-            file_info.user_id,
-            file_info.created_at.isoformat(),
-            file_info.updated_at.isoformat(),
-            json.dumps(file_info.metadata),
-            json.dumps(file_info.tags),
-            file_info.path,
-            content_text
-        ))
+        async with self._db_lock:
+            cursor = self._conn.cursor()
+            cursor.execute("""
+                INSERT INTO files (id, filename, content_type, size, user_id, created_at, updated_at, metadata, tags, path, content_text)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                file_info.id,
+                file_info.filename,
+                file_info.content_type,
+                file_info.size,
+                file_info.user_id,
+                file_info.created_at.isoformat(),
+                file_info.updated_at.isoformat(),
+                json.dumps(file_info.metadata),
+                json.dumps(file_info.tags),
+                file_info.path,
+                content_text
+            ))
 
-        # Update FTS index
-        cursor.execute("""
-            INSERT INTO files_fts (rowid, filename, content_text, tags)
-            SELECT rowid, filename, content_text, tags FROM files WHERE id = ?
-        """, (file_id,))
+            # Update FTS index
+            cursor.execute("""
+                INSERT INTO files_fts (rowid, filename, content_text, tags)
+                SELECT rowid, filename, content_text, tags FROM files WHERE id = ?
+            """, (file_id,))
 
-        # Generate embeddings if available
-        if self._embedder and content_text:
-            await self._generate_embeddings(file_id, content_text)
+            # Generate embeddings if available
+            if self._embedder and content_text:
+                await self._generate_embeddings(file_id, content_text)
 
-        self._conn.commit()
+            self._conn.commit()
         logger.info(f"Uploaded file: {filename} -> {file_id}")
         return file_info
 
@@ -473,10 +481,11 @@ class LocalStorageBackend(StorageBackend):
             file_path.unlink()
 
         # Delete from database
-        cursor = self._conn.cursor()
-        cursor.execute("DELETE FROM embeddings WHERE file_id = ?", (file_id,))
-        cursor.execute("DELETE FROM files WHERE id = ?", (file_id,))
-        self._conn.commit()
+        async with self._db_lock:
+            cursor = self._conn.cursor()
+            cursor.execute("DELETE FROM embeddings WHERE file_id = ?", (file_id,))
+            cursor.execute("DELETE FROM files WHERE id = ?", (file_id,))
+            self._conn.commit()
 
         return True
 
