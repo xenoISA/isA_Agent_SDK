@@ -142,7 +142,7 @@ def __getattr__(name):
     # Core query functions
     if name in ("query", "query_sync", "ask", "ask_sync", "execute_tool",
                 "get_available_tools", "get_session_state", "resume",
-                "resume_sync", "QueryExecutor"):
+                "resume_sync"):
         if "_query" not in _lazy_modules:
             _lazy_modules["_query"] = importlib.import_module("._query", "isa_agent_sdk")
         return getattr(_lazy_modules["_query"], name)
@@ -268,8 +268,6 @@ __all__ = [
     "get_session_state",
     "resume",
     "resume_sync",
-    "QueryExecutor",
-
     # Options
     "ISAAgentOptions",
     "Options",

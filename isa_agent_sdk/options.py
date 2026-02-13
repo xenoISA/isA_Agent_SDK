@@ -584,6 +584,15 @@ class ISAAgentOptions:
     max_iterations: int = 50
     """Maximum graph iterations"""
 
+    max_parallel_tasks: int = 3
+    """Maximum number of tasks to execute in parallel"""
+
+    max_task_retries: int = 2
+    """Maximum retry attempts per failed task"""
+
+    task_timeout: int = 300
+    """Timeout in seconds for each task batch"""
+
     tool_discovery: Union[str, ToolDiscoveryMode] = ToolDiscoveryMode.EXPLICIT
     """Tool discovery mode: "explicit", "semantic", "hybrid" """
 
@@ -647,6 +656,12 @@ class ISAAgentOptions:
             raise ValueError(
                 f"summarization_threshold must be positive, got {self.summarization_threshold}"
             )
+        if self.max_parallel_tasks <= 0:
+            raise ValueError(f"max_parallel_tasks must be positive, got {self.max_parallel_tasks}")
+        if self.max_task_retries < 0:
+            raise ValueError(f"max_task_retries must be non-negative, got {self.max_task_retries}")
+        if self.task_timeout <= 0:
+            raise ValueError(f"task_timeout must be positive, got {self.task_timeout}")
 
         # Convert MCP server dicts to MCPServerConfig (preserve SDKMCPServer as-is)
         if self.mcp_servers:
@@ -708,6 +723,9 @@ class ISAAgentOptions:
                 "skills": self.skills,
                 "cwd": self.cwd,
                 "user_id": self.user_id,
+                "max_parallel_tasks": self.max_parallel_tasks,
+                "max_task_retries": self.max_task_retries,
+                "task_timeout": self.task_timeout,
             },
             "recursion_limit": self.max_iterations,
         }

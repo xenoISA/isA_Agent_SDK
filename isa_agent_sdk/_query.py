@@ -1357,7 +1357,4 @@ __all__ = [
 
     # Session management
     "get_session_state",
-
-    # Executor class
-    "QueryExecutor",
 ]
