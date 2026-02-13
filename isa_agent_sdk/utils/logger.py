@@ -115,18 +115,11 @@ def setup_logger(
                         )
                         
                         self._success_count += 1
-                        
-                        # Debug: log first few successful pushes
-                        if self._success_count <= 2:
-                            print(f"[LOKI_DEBUG] Successfully pushed log to Loki: {log_entry[:80]}", flush=True)
-                            
+
                     except Exception as e:
                         # Graceful degradation - don't fail the application
                         self._error_count += 1
-                        if self._error_count <= 3:
-                            print(f"[LOKI_ERROR] Failed to push log to Loki: {e}", flush=True)
-                            import traceback
-                            traceback.print_exc()
+                        # Silently ignore Loki errors after first few to avoid log spam
 
                 def close(self):
                     """Clean up Loki client connection"""
@@ -167,14 +160,9 @@ def setup_logger(
                         else:
                             loki_host = loki_url
                     
-                    if name == "isA_Agent":
-                        print(f"[LOKI] Discovered Loki service via Consul: {loki_host}:{loki_port}", flush=True)
-                        
                 except Exception as e:
                     # Consul discovery failed, use configured values
-                    if name == "isA_Agent":
-                        print(f"[LOKI] Consul discovery failed, using configured Loki: {loki_host}:{loki_port}", flush=True)
-                        print(f"[LOKI] Discovery error: {e}", flush=True)
+                    pass
 
             # Extract service name and logger component
             # e.g., "isA_Agent.API" -> service="agent", logger="API"

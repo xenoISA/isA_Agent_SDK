@@ -46,15 +46,13 @@ class ResponseNode(BaseNode):
         # Log incoming state for debugging
         message_types = [type(msg).__name__ for msg in messages]
         output_format_from_config = config.get("configurable", {}).get("output_format") if config else None
-        state_log = (
-            f"[PHASE:NODE_RESPONSE] state_received | "
+        self.logger.debug(
+            f"state_received | "
             f"session_id={session_id} | "
             f"messages_count={len(messages)} | "
             f"message_types={message_types} | "
             f"output_format_from_config={output_format_from_config}"
         )
-        print(f"[RESPONSE_NODE] {state_log}", flush=True)
-        self.logger.info(state_log)
 
         if not messages:
             self.logger.warning(
@@ -149,28 +147,18 @@ class ResponseNode(BaseNode):
                 f"conversation_summary={conversation_summary}"
             )
 
-            print(f"[DEBUG] ResponseNode llm_input | session_id={session_id} | stream_tokens={stream_tokens_flag} | output_format={output_format} | state_keys={list(state.keys())}", flush=True)
-
-            # Log the complete prompt being sent to the model
-            print(f"[DEBUG] {'='*80}", flush=True)
-            print(f"[DEBUG] COMPLETE PROMPT BEING SENT TO MODEL:", flush=True)
-            print(f"[DEBUG] {'='*80}", flush=True)
-            print(f"[DEBUG] {response_prompt}", flush=True)
-            print(f"[DEBUG] {'='*80}", flush=True)
-
-            self.logger.info(
-                f"[RESPONSE_NODE] model_call_input | "
+            self.logger.debug(
+                f"model_call_input | "
                 f"session_id={session_id} | "
                 f"output_format={output_format or 'text'} | "
                 f"stream_tokens={stream_tokens_flag} | "
-                f"prompt_length={len(response_prompt)} | "
-                f"complete_prompt='{response_prompt}'"
+                f"prompt_length={len(response_prompt)}"
             )
 
             # Use BaseNode's call_model
             if output_format == "json":
                 # For JSON output, use OpenAI gpt-4.1-nano with response_format support
-                print(f"[DEBUG] Calling model: gpt-4.1-nano (openai) with output_format=json", flush=True)
+                self.logger.debug("Calling model: gpt-4.1-nano (openai) with output_format=json")
                 response = await self.call_model(
                     messages=[HumanMessage(content=response_prompt)],
                     stream_tokens=False,  # Disable streaming for JSON
@@ -181,15 +169,13 @@ class ResponseNode(BaseNode):
             else:
                 # For normal text output, use configured response model (gpt-5-nano by default)
                 from isa_agent_sdk.core.config import settings
-                print(f"[DEBUG] Calling model: {settings.response_model} ({settings.response_model_provider})", flush=True)
+                self.logger.debug(f"Calling model: {settings.response_model} ({settings.response_model_provider})")
                 response = await self.call_model(
                     messages=[HumanMessage(content=response_prompt)],
                     stream_tokens=stream_tokens_flag,
                     model=settings.response_model,
                     provider=settings.response_model_provider
                 )
-
-            print(f"[DEBUG] ResponseNode llm_output | session_id={session_id} | response_type={type(response).__name__} | has_content={hasattr(response, 'content')}", flush=True)
 
             response_duration = int((time.time() - response_start) * 1000)
             response_length = len(response.content) if hasattr(response, 'content') else 0
@@ -280,44 +266,20 @@ class ResponseNode(BaseNode):
         """
         conversation_messages = []
 
-        # Log all messages for debugging
-        self.logger.info(f"[RESPONSE_NODE] _build_conversation_summary | total_messages={len(messages)}")
-
         for idx, msg in enumerate(messages):
             msg_type = type(msg).__name__
             content = getattr(msg, 'content', '')
-            content_type = type(content).__name__
-            content_length = len(str(content)) if content else 0
 
             # Get additional info
             has_additional_kwargs = hasattr(msg, 'additional_kwargs')
             is_internal = msg.additional_kwargs.get('is_internal', False) if has_additional_kwargs else False
 
-            # Log each message in detail
-            content_preview = str(content)[:200] if content else 'EMPTY'
-            self.logger.info(
-                f"[RESPONSE_NODE] message_{idx} | "
-                f"type={msg_type} | "
-                f"content_type={content_type} | "
-                f"content_length={content_length} | "
-                f"is_internal={is_internal} | "
-                f"content_preview='{content_preview}'"
-            )
-
-            # Also print to console for immediate visibility
-            print(f"[DEBUG] Message {idx}: type={msg_type}, content_type={content_type}, length={content_length}", flush=True)
-            print(f"[DEBUG]   Content preview: {content_preview}", flush=True)
-
             # Skip internal reasoning messages (marked with is_internal=True)
             if has_additional_kwargs and is_internal:
-                self.logger.info(f"[RESPONSE_NODE] message_{idx} | action=SKIPPED | reason=is_internal")
-                print(f"[DEBUG]   -> SKIPPED (internal)", flush=True)
                 continue
 
             # Skip messages with no content
             if not content:
-                self.logger.info(f"[RESPONSE_NODE] message_{idx} | action=SKIPPED | reason=no_content")
-                print(f"[DEBUG]   -> SKIPPED (no content)", flush=True)
                 continue
 
             # Keep all user messages and assistant responses
@@ -325,14 +287,11 @@ class ResponseNode(BaseNode):
             formatted_msg = f"{role}: {content}"
             conversation_messages.append(formatted_msg)
 
-            self.logger.info(f"[RESPONSE_NODE] message_{idx} | action=INCLUDED | role={role}")
-            print(f"[DEBUG]   -> INCLUDED as {role}", flush=True)
-
         # Use last 10 non-internal messages for context (prevents token overflow)
         conversation_text = "\n\n".join(conversation_messages[-10:])
 
-        self.logger.info(
-            f"[RESPONSE_NODE] conversation_summary | "
+        self.logger.debug(
+            f"conversation_summary | "
             f"total_included={len(conversation_messages)} | "
             f"used_last_10={min(10, len(conversation_messages))} | "
             f"summary_length={len(conversation_text)}"
@@ -343,12 +302,6 @@ class ResponseNode(BaseNode):
 {conversation_text}
 
 Respond naturally to the user's most recent question using all relevant context above."""
-
-        # Log the complete summary
-        self.logger.info(f"[RESPONSE_NODE] complete_summary | summary='{summary}'")
-        print(f"[DEBUG] Complete conversation summary:", flush=True)
-        print(f"[DEBUG] {summary}", flush=True)
-        print(f"[DEBUG] {'='*80}", flush=True)
 
         return summary
     

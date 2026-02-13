@@ -9,9 +9,16 @@ Configuration hierarchy:
 - consul_config: Service discovery settings
 - logging_config: Logging configuration
 - lightning_config: Agent Lightning (RL training) configuration
+
+Environment loading is delegated to ConfigManager from isA_user/core,
+which follows the platform-wide convention:
+  1. Environment variables (highest priority)
+  2. deployment/environments/{env}.env
+  3. config/*.json files
+  4. Defaults
 """
 import os
-from dotenv import load_dotenv
+import logging
 from .logging_config import LoggingConfig
 from .infra_config import InfraConfig
 from .consul_config import consul_config, ConsulConfig
@@ -27,17 +34,36 @@ from .agent_config import (
     AgentPostgresConfig,
 )
 
-# Load environment file based on ENVIRONMENT
-env = os.getenv("ENVIRONMENT", "dev")
-env_files = {
-    "dev": "deployment/dev/config/.env.dev",
-    "development": "deployment/dev/config/.env.dev",
-    "test": "deployment/test/config/.env.test",
-    "staging": "deployment/staging/config/.env.staging",
-    "production": "deployment/production/.env.production"
-}
-env_file = env_files.get(env, "deployment/dev/config/.env.dev")
-load_dotenv(env_file, override=False)
+logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Load environment using the platform-wide ConfigManager (isA_user/core)
+# ---------------------------------------------------------------------------
+try:
+    from isA_user.core.config_manager import ConfigManager
+
+    _config_manager = ConfigManager("agent_service")
+    logger.info(
+        "ConfigManager loaded env=%s POSTGRES_DB=%s",
+        _config_manager.environment.value,
+        os.getenv("POSTGRES_DB"),
+    )
+except ImportError:
+    # Fallback: load env file directly (e.g. in SDK-only test environments)
+    from dotenv import load_dotenv
+
+    _env_files = {
+        "dev": "deployment/environments/dev.env",
+        "development": "deployment/environments/dev.env",
+        "test": "deployment/environments/test.env",
+        "staging": "deployment/environments/staging.env",
+        "production": "deployment/environments/production.env",
+    }
+    _env = os.getenv("ENVIRONMENT", os.getenv("ENV", "dev")).lower()
+    _env_file = _env_files.get(_env, "deployment/environments/dev.env")
+    load_dotenv(_env_file, override=False)
+    logger.info("ConfigManager unavailable, loaded %s directly", _env_file)
+    _config_manager = None
 
 # Create global settings instance
 settings = AgentConfig.from_env()
@@ -45,6 +71,10 @@ settings = AgentConfig.from_env()
 def get_settings() -> AgentConfig:
     """Get global settings instance"""
     return settings
+
+def get_config_manager():
+    """Get the ConfigManager instance (None if unavailable)"""
+    return _config_manager
 
 def reload_settings() -> AgentConfig:
     """Reload settings from environment"""
@@ -62,6 +92,7 @@ __all__ = [
     # Main config
     'AgentConfig',
     'get_settings',
+    'get_config_manager',
     'reload_settings',
     'settings',
     'get_openai_api_key',

@@ -91,6 +91,25 @@ class ReasonNode(BaseNode):
         if system_prompt_config and system_prompt_config.append:
             user_instructions = system_prompt_config.append
 
+        # Add project context (ISA.md/CLAUDE.md) if available
+        project_context = config.get("configurable", {}).get("project_context", "")
+        if project_context:
+            # Prepend project context to user instructions
+            project_section = f"""## PROJECT CONTEXT
+
+The following is persistent project context that should inform all responses:
+
+{project_context}
+
+---
+"""
+            user_instructions = project_section + (user_instructions or "")
+            self.logger.info(
+                f"reason_node_project_context_injected | "
+                f"session_id={session_id} | "
+                f"context_length={len(project_context)}"
+            )
+
         # Determine which MCP prompt to use
         prompt_name = "default_reason_prompt"
         if system_prompt_config and system_prompt_config.preset:
@@ -277,14 +296,12 @@ If the request involves ANY of these:
         # Log incoming state
         messages = state.get("messages", [])
         message_types = [type(msg).__name__ for msg in messages]
-        state_log = (
-            f"[PHASE:NODE_REASON] state_received | "
+        self.logger.debug(
+            f"state_received | "
             f"messages_count={len(messages)} | "
             f"message_types={message_types} | "
             f"state_keys={list(state.keys())}"
         )
-        print(f"[REASON_NODE] {state_log}", flush=True)
-        self.logger.info(state_log)
 
         # 1. Get context from runnable_config
         context_start = time.time()
@@ -303,10 +320,11 @@ If the request involves ANY of these:
             f"tools={[t.get('name', 'unknown') for t in available_tools]}"
         )
 
-        # Write timing to file for debugging
-        with open('/tmp/node_timing.log', 'a') as f:
-            f.write(f"[TIMING] reason_node_context | session_id={session_id} | duration_ms={context_duration}\n")
-        print(f"[TIMING] reason_node_context | session_id={session_id} | duration_ms={context_duration}", flush=True)
+        self.logger.debug(
+            f"reason_node_context | "
+            f"session_id={session_id} | "
+            f"duration_ms={context_duration}"
+        )
         self.logger.info(
             f"reason_node_context | "
             f"session_id={session_id} | "
@@ -405,8 +423,7 @@ If the request involves ANY of these:
             )
         
         prompt_prep_duration = int((time.time() - prompt_prep_start) * 1000)
-        print(f"[TIMING] reason_node_prompt_prep | session_id={session_id} | duration_ms={prompt_prep_duration}", flush=True)
-        self.logger.info(
+        self.logger.debug(
             f"reason_node_prompt_prep | "
             f"session_id={session_id} | "
             f"duration_ms={prompt_prep_duration}"
@@ -432,16 +449,8 @@ If the request involves ANY of these:
         conversation_messages = self._cleanup_incomplete_tool_calls(conversation_messages)
 
         # Build messages list with proper ordering
-        # Debug: Log what's actually going into the SystemMessage
-        print(f"[DEBUG_SYSTEMMESSAGE] Creating SystemMessage with content length: {len(system_prompt)}", flush=True)
-        tools_line_in_message = [line for line in system_prompt.split('\n') if '**Tools**' in line]
-        if tools_line_in_message:
-            print(f"[DEBUG_SYSTEMMESSAGE] Tools line in message: {tools_line_in_message[0]}", flush=True)
-
         messages = [SystemMessage(content=system_prompt)]
-
-        # Verify the message was created correctly
-        print(f"[DEBUG_SYSTEMMESSAGE] SystemMessage created | type={type(messages[0])} | content_length={len(messages[0].content)}", flush=True)
+        self.logger.debug(f"SystemMessage created | content_length={len(messages[0].content)}")
 
         # Add conversation summary if exists (from auto-summarization)
         if state.get("summary"):
@@ -457,34 +466,22 @@ If the request involves ANY of these:
         messages.extend(conversation_messages)
         messages_prep_duration = int((time.time() - messages_prep_start) * 1000)
 
-        print(f"[TIMING] reason_node_messages_prep | session_id={session_id} | message_count={len(messages)} | duration_ms={messages_prep_duration}", flush=True)
-        self.logger.info(
+        self.logger.debug(
             f"reason_node_messages_prep | "
             f"session_id={session_id} | "
             f"message_count={len(messages)} | "
             f"duration_ms={messages_prep_duration}"
         )
 
-        # DEBUG: Log all messages being sent to LLM (especially system prompt)
-        print(f"[DEBUG] reason_node | Messages sent to LLM for session {session_id}:", flush=True)
-        self.logger.info(f"[DEBUG] Messages sent to LLM for session {session_id}:")
-        for idx, msg in enumerate(messages):
-            msg_type = type(msg).__name__
-            content = getattr(msg, 'content', str(msg))
-            # For system messages, show full content. For others, truncate
-            if msg_type == 'SystemMessage':
-                print(f"[DEBUG]   [{idx}] {msg_type}: {content}", flush=True)
-                self.logger.info(f"[DEBUG]   [{idx}] {msg_type}: {content}")
-            else:
-                print(f"[DEBUG]   [{idx}] {msg_type}: {content[:150]}...", flush=True)
-                self.logger.info(f"[DEBUG]   [{idx}] {msg_type}: {content[:150]}")
-
         try:
             # 4. Call model with complete conversation history and available tools using BaseNode
             model_start = time.time()
-            with open('/tmp/node_timing.log', 'a') as f:
-                f.write(f"[TIMING] reason_node_model_call_start | session_id={session_id} | tool_count={len(available_tools or [])} | message_count={len(messages)}\n")
-            print(f"[TIMING] reason_node_model_call_start | session_id={session_id}", flush=True)
+            self.logger.debug(
+                f"reason_node_model_call_start | "
+                f"session_id={session_id} | "
+                f"tool_count={len(available_tools or [])} | "
+                f"message_count={len(messages)}"
+            )
 
             # Log LLM input for debugging
             tool_names_input = [t.get('name', 'unknown') for t in (available_tools or [])]
@@ -510,11 +507,12 @@ If the request involves ANY of these:
                     content = content[:1000] + "...[TRUNCATED]"
                 complete_input_log.append(f"{i+1}. {msg_type}: {content[:200]}")
 
-            # DEBUG: Write to file to see actual count
-            with open('/tmp/reason_debug.log', 'a') as f:
-                f.write(f"session={session_id} | messages_var_len={len(messages)} | types={[type(m).__name__ for m in messages]}\n")
-                for i, msg in enumerate(messages):
-                    f.write(f"  {i+1}. {type(msg).__name__}: {getattr(msg, 'content', str(msg))[:100]}\n")
+            self.logger.debug(
+                f"reason_node_messages | "
+                f"session_id={session_id} | "
+                f"messages_count={len(messages)} | "
+                f"types={[type(m).__name__ for m in messages]}"
+            )
 
             self.logger.info(
                 f"[PHASE:NODE_REASON] llm_complete_input | "
@@ -544,9 +542,11 @@ If the request involves ANY of these:
 
             model_duration = int((time.time() - model_start) * 1000)
 
-            with open('/tmp/node_timing.log', 'a') as f:
-                f.write(f"[TIMING] reason_node_call_model | session_id={session_id} | duration_ms={call_model_duration}\n")
-            print(f"[TIMING] reason_node_call_model | session_id={session_id} | duration_ms={call_model_duration}", flush=True)
+            self.logger.debug(
+                f"reason_node_call_model | "
+                f"session_id={session_id} | "
+                f"duration_ms={call_model_duration}"
+            )
 
             # 5. Determine next action
             has_tool_calls = hasattr(response, 'tool_calls') and bool(getattr(response, 'tool_calls', []))
@@ -612,12 +612,21 @@ If the request involves ANY of these:
 
             # Add metadata to help identify this message type
             if hasattr(response, 'additional_kwargs'):
+                # Preserve existing reasoning_content when updating
+                existing_reasoning = response.additional_kwargs.get('reasoning_content') if response.additional_kwargs else None
+
                 response.additional_kwargs.update({
                     "message_role": "reasoning",
                     "is_internal": True,
                     "node": "reason_node",
                     "prompt_used": prompt_name
                 })
+
+                # Ensure reasoning_content is preserved (DeepSeek-R1 requires it when tool_calls exist)
+                if existing_reasoning:
+                    response.additional_kwargs['reasoning_content'] = existing_reasoning
+                elif has_tool_calls:
+                    response.additional_kwargs['reasoning_content'] = ""
 
             self.logger.info(
                 f"[PHASE:NODE_REASON] marked_as_internal | "
@@ -628,16 +637,13 @@ If the request involves ANY of these:
 
             # 8. Log output state and return
             output_msg_type = type(response).__name__
-            output_log = (
-                f"[PHASE:NODE_REASON] state_output | "
+            self.logger.debug(
+                f"state_output | "
                 f"session_id={session_id} | "
-                f"output_messages_count=1 | "
                 f"output_message_type={output_msg_type} | "
                 f"message_name={response.name} | "
                 f"next_action={next_action}"
             )
-            print(f"[REASON_NODE] {output_log}", flush=True)
-            self.logger.info(output_log)
 
             # Return state update - let add_messages reducer handle appending
             return {
@@ -810,4 +816,3 @@ If the request involves ANY of these:
                 summary_parts.append(f"{i+1}. {msg_type}: {content}")
 
         return "\n".join(summary_parts) if summary_parts else "No conversation history"
-

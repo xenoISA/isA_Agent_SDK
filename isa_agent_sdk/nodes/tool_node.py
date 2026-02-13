@@ -33,7 +33,7 @@ class ToolNode(BaseNode):
 
     def __init__(self):
         super().__init__("ToolNode")
-        print("🔧🔧🔧 ToolNode CONSTRUCTOR called! 🔧🔧🔧")
+        self.logger.debug("ToolNode constructor called")
 
         # HIL detection and routing (simple, follows architecture)
         self.hil_detector = ToolHILDetector()
@@ -59,9 +59,8 @@ class ToolNode(BaseNode):
         Returns:
             Updated state with tool execution results
         """
-        print("🔧🔧🔧 ToolNode._execute_logic started! 🔧🔧🔧")
-
-        self.logger.info("🔧 ToolNode executing tools")
+        self.logger.debug("ToolNode._execute_logic started")
+        self.logger.info("ToolNode executing tools")
 
         # Check for auto-approve settings in state (allows per-session control)
         # This is similar to Claude Code's -y/--dangerously-skip-permissions flag
@@ -346,6 +345,9 @@ class ToolNode(BaseNode):
                 "failed_task_count": 0,
                 "next_action": "agent_executor"
             })
+            # Include DAG state if dependencies were detected
+            if "task_dag" in autonomous_plan:
+                result["task_dag"] = autonomous_plan["task_dag"]
             self.logger.info(
                 f"[AUTONOMOUS] Plan activated | "
                 f"plan_id={autonomous_plan.get('plan_id', 'unknown')} | "
@@ -510,11 +512,36 @@ class ToolNode(BaseNode):
                 f"first_task={tasks[0].get('title', 'unknown') if tasks else 'N/A'}"
             )
 
-            return {
+            result_data = {
                 "plan_id": plan_id,
                 "plan": plan_info,
                 "tasks": tasks
             }
+
+            # Check if any task has depends_on -> build DAG for wavefront execution
+            has_dependencies = any(
+                task.get("depends_on") for task in tasks if isinstance(task, dict)
+            )
+
+            if has_dependencies:
+                try:
+                    from isa_agent_sdk.dag import DAGScheduler
+                    dag_state = DAGScheduler.build_dag(tasks)
+                    errors = DAGScheduler.validate(dag_state)
+                    if errors:
+                        self.logger.warning(f"[AUTONOMOUS] DAG validation errors: {errors}, falling back to flat list")
+                    else:
+                        dag_state.execution_order = DAGScheduler.compute_wavefronts(dag_state)
+                        result_data["task_dag"] = dag_state.to_dict()
+                        self.logger.info(
+                            f"[AUTONOMOUS] DAG built | "
+                            f"wavefronts={len(dag_state.execution_order)} | "
+                            f"tasks={len(dag_state.tasks)}"
+                        )
+                except Exception as dag_err:
+                    self.logger.warning(f"[AUTONOMOUS] DAG build failed: {dag_err}, falling back to flat list")
+
+            return result_data
 
         except Exception as e:
             self.logger.error(f"[AUTONOMOUS] Failed to detect plan: {e}", exc_info=True)

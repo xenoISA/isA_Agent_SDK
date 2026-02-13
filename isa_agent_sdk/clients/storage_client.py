@@ -302,7 +302,8 @@ class LocalStorageBackend(StorageBackend):
             cursor = self._conn.cursor()
             cursor.execute("SELECT 1")
             return self.files_path.exists()
-        except Exception:
+        except (sqlite3.Error, OSError) as e:
+            logger.warning(f"Storage health check failed: {e}")
             return False
 
     async def close(self) -> None:

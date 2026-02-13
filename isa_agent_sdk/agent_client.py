@@ -139,7 +139,7 @@ class AgentEvent:
     @property
     def is_content(self) -> bool:
         """Is this a content/token event?"""
-        return self.type in ["content.token", "content.complete", "token", "content"]
+        return self.type in ["content.token", "content.complete", "token", "content", "text", "result"]
 
     @property
     def is_thinking(self) -> bool:
@@ -149,7 +149,7 @@ class AgentEvent:
     @property
     def is_tool_call(self) -> bool:
         """Is this a tool call event?"""
-        return self.type in ["tool.call", "tool_calls"]
+        return self.type in ["tool.call", "tool_calls", "tool_use"]
 
     @property
     def is_tool_executing(self) -> bool:
@@ -159,7 +159,7 @@ class AgentEvent:
     @property
     def is_tool_result(self) -> bool:
         """Is tool result?"""
-        return self.type == "tool.result"
+        return self.type in ["tool.result", "tool_result"]
 
     @property
     def is_session_start(self) -> bool:
@@ -776,6 +776,7 @@ class ISAAgentSync:
 
     def __getattr__(self, name):
         return getattr(self._agent, name)
+
 
 
 # ============================================================================

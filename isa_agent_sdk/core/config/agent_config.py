@@ -52,6 +52,8 @@ class AgentQdrantConfig:
     @classmethod
     def from_env(cls) -> 'AgentQdrantConfig':
         prefix = os.getenv("AGENT_QDRANT_PREFIX", "agent")
+        model_cfg = ModelConfig.from_env()
+        model_cfg = ModelConfig.from_env()
         return cls(
             conversation_collection=os.getenv("AGENT_QDRANT_CONVERSATIONS", f"{prefix}_conversations"),
             memory_collection=os.getenv("AGENT_QDRANT_MEMORIES", f"{prefix}_memories"),
@@ -196,6 +198,7 @@ class AgentConfig:
     @classmethod
     def from_env(cls) -> "AgentConfig":
         """Load complete configuration from environment"""
+        model_cfg = ModelConfig.from_env()
         return cls(
             # Environment
             environment=os.getenv("ENVIRONMENT", "dev"),
@@ -216,14 +219,14 @@ class AgentConfig:
             pool_manager_url=os.getenv("POOL_MANAGER_URL", "http://localhost:8090"),
             pool_acquire_timeout=_int(os.getenv("POOL_ACQUIRE_TIMEOUT", "30"), 30),
             pool_request_timeout=_int(os.getenv("POOL_REQUEST_TIMEOUT", "300"), 300),
-            # AI (legacy - use model config instead)
-            ai_provider=os.getenv("AI_PROVIDER", "openai"),
-            ai_model=os.getenv("AI_MODEL", "gpt-4.1-nano"),
+            # AI (legacy fields read from model config for single source of truth)
+            ai_provider=model_cfg.default_llm_provider,
+            ai_model=model_cfg.default_llm,
             ai_temperature=_float(os.getenv("AI_TEMPERATURE", "0"), 0.0),
-            reason_model=os.getenv("REASON_MODEL", "deepseek-reasoner"),
-            reason_model_provider=os.getenv("REASON_MODEL_PROVIDER", "yyds"),
-            response_model=os.getenv("RESPONSE_MODEL", "llama-3.3-70b"),
-            response_model_provider=os.getenv("RESPONSE_MODEL_PROVIDER", "cerebras"),
+            reason_model=model_cfg.reason_llm,
+            reason_model_provider=model_cfg.reason_llm_provider,
+            response_model=model_cfg.response_llm,
+            response_model_provider=model_cfg.response_llm_provider,
             openai_api_key=os.getenv("OPENAI_API_KEY"),
             openai_api_base=os.getenv("OPENAI_API_BASE", "https://api.openai.com/v1"),
             # Consul
@@ -238,7 +241,7 @@ class AgentConfig:
             infrastructure=InfraConfig.from_env(),
             services=ServiceConfig.from_env(),
             lightning=LightningConfig.from_env(),
-            model=ModelConfig.from_env(),
+            model=model_cfg,
             resources=AgentResourceConfig.from_env(),
         )
 

@@ -64,7 +64,8 @@ class PoolManagerClient:
         self,
         agent_config: Dict[str, Any],
         session_id: str,
-        user_id: Optional[str] = None
+        user_id: Optional[str] = None,
+        pool_type: str = "agent",
     ) -> Dict[str, Any]:
         """
         Acquire an agent VM from the pool
@@ -80,7 +81,7 @@ class PoolManagerClient:
         session = await self._get_session()
 
         payload = {
-            "pool_type": "agent",
+            "pool_type": pool_type,
             "config": agent_config,
             "session_id": session_id,
             "user_id": user_id,
@@ -89,7 +90,7 @@ class PoolManagerClient:
 
         try:
             async with session.post(
-                f"{self.pool_manager_url}/api/v1/pools/agent/acquire",
+                f"{self.pool_manager_url}/api/v1/pools/{pool_type}/acquire",
                 json=payload,
                 timeout=aiohttp.ClientTimeout(total=self.acquire_timeout + 5)
             ) as resp:
@@ -113,7 +114,8 @@ class PoolManagerClient:
         self,
         instance_id: str,
         query: str,
-        context: Optional[Dict[str, Any]] = None
+        context: Optional[Dict[str, Any]] = None,
+        pool_type: str = "agent",
     ) -> Dict[str, Any]:
         """
         Execute a query on an agent VM (non-streaming)
@@ -131,14 +133,14 @@ class PoolManagerClient:
         payload = {
             "action": "query",
             "params": {
-                "query": query,
+                "prompt": query,
                 "context": context or {}
             }
         }
 
         try:
             async with session.post(
-                f"{self.pool_manager_url}/api/v1/pools/agent/{instance_id}/execute",
+                f"{self.pool_manager_url}/api/v1/pools/{pool_type}/{instance_id}/execute",
                 json=payload
             ) as resp:
                 if resp.status != 200:
@@ -159,7 +161,8 @@ class PoolManagerClient:
         self,
         instance_id: str,
         query: str,
-        context: Optional[Dict[str, Any]] = None
+        context: Optional[Dict[str, Any]] = None,
+        pool_type: str = "agent",
     ) -> AsyncIterator[Dict[str, Any]]:
         """
         Stream a query response from an agent VM
@@ -175,13 +178,13 @@ class PoolManagerClient:
         session = await self._get_session()
 
         payload = {
-            "query": query,
+            "prompt": query,
             "context": context or {}
         }
 
         try:
             async with session.post(
-                f"{self.pool_manager_url}/api/v1/pools/agent/{instance_id}/stream",
+                f"{self.pool_manager_url}/api/v1/pools/{pool_type}/{instance_id}/stream",
                 json=payload
             ) as resp:
                 if resp.status != 200:
@@ -275,7 +278,7 @@ class PoolManagerClient:
             logger.error(f"Reset network error: {e}")
             raise RuntimeError(f"Reset failed: {e}")
 
-    async def release_vm(self, instance_id: str) -> bool:
+    async def release_vm(self, instance_id: str, pool_type: str = "agent") -> bool:
         """
         Release an agent VM back to the pool
 
@@ -289,7 +292,7 @@ class PoolManagerClient:
 
         try:
             async with session.post(
-                f"{self.pool_manager_url}/api/v1/pools/agent/{instance_id}/release"
+                f"{self.pool_manager_url}/api/v1/pools/{pool_type}/{instance_id}/release"
             ) as resp:
                 if resp.status not in (200, 204):
                     error_text = await resp.text()

@@ -249,7 +249,8 @@ class LocalSessionBackend(SessionBackend):
             cursor = self._conn.cursor()
             cursor.execute("SELECT 1")
             return True
-        except Exception:
+        except sqlite3.Error as e:
+            logger.warning(f"Session health check failed: {e}")
             return False
 
     async def close(self) -> None:
@@ -494,7 +495,8 @@ class CloudSessionBackend(SessionBackend):
         try:
             result = self._user_client.health_check()
             return result.get("success", False)
-        except Exception:
+        except (ConnectionError, TimeoutError, OSError) as e:
+            logger.warning(f"Cloud session health check failed: {e}")
             return False
 
     async def close(self) -> None:

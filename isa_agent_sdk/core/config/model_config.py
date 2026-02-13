@@ -41,12 +41,12 @@ class ModelConfig:
     default_llm_provider: str = "openai"
 
     # Reasoning model for complex tasks (chain-of-thought)
-    reason_llm: str = "deepseek-reasoner"
-    reason_llm_provider: str = "yyds"
+    reason_llm: str = "gpt-5-nano"
+    reason_llm_provider: str = "openai"
 
     # Response model for summaries/formatting (faster, cheaper)
-    response_llm: str = "llama-3.3-70b"
-    response_llm_provider: str = "cerebras"
+    response_llm: str = "gpt-5-nano"
+    response_llm_provider: str = "openai"
 
     # Model parameters
     temperature: float = 0.0
@@ -82,10 +82,10 @@ class ModelConfig:
             # LLM Configuration
             default_llm=os.getenv("AI_MODEL") or os.getenv("DEFAULT_LLM", "gpt-4.1-nano"),
             default_llm_provider=os.getenv("AI_PROVIDER") or os.getenv("DEFAULT_LLM_PROVIDER", "openai"),
-            reason_llm=os.getenv("REASON_MODEL") or os.getenv("REASON_LLM", "deepseek-reasoner"),
-            reason_llm_provider=os.getenv("REASON_MODEL_PROVIDER") or os.getenv("REASON_LLM_PROVIDER", "yyds"),
-            response_llm=os.getenv("RESPONSE_MODEL") or os.getenv("RESPONSE_LLM", "llama-3.3-70b"),
-            response_llm_provider=os.getenv("RESPONSE_MODEL_PROVIDER") or os.getenv("RESPONSE_LLM_PROVIDER", "cerebras"),
+            reason_llm=os.getenv("REASON_MODEL") or os.getenv("REASON_LLM", "gpt-5-nano"),
+            reason_llm_provider=os.getenv("REASON_MODEL_PROVIDER") or os.getenv("REASON_LLM_PROVIDER", "openai"),
+            response_llm=os.getenv("RESPONSE_MODEL") or os.getenv("RESPONSE_LLM", "gpt-5-nano"),
+            response_llm_provider=os.getenv("RESPONSE_MODEL_PROVIDER") or os.getenv("RESPONSE_LLM_PROVIDER", "openai"),
 
             # Model parameters
             temperature=_float(os.getenv("AI_TEMPERATURE") or os.getenv("LLM_TEMPERATURE", "0.0"), 0.0),

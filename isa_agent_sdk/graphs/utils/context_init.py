@@ -15,6 +15,9 @@ import asyncio
 import logging
 import time
 import hashlib
+import copy
+import os
+from pathlib import Path
 from datetime import datetime, timezone
 from typing import Dict, Any, Optional, List, Tuple
 from langchain_core.messages import HumanMessage
@@ -57,6 +60,8 @@ class RuntimeContextHelper:
         self._tool_search_cache = {}  # Cache for tool searches
         self._memory_context_cache = {}  # Cache for memory contexts
         self._prompt_cache = {}  # Cache for assembled prompts
+        self._runtime_context_cache = {}  # Cache for static runtime context parts
+        self._user_file_info_cache = {}  # Cache for user file info
         
         # Cache statistics
         self._cache_stats = {
@@ -96,8 +101,7 @@ class RuntimeContextHelper:
         """Load default prompts from MCP with required arguments"""
         try:
             prompts = await self.mcp_service.get_default_prompts(max_results=50)
-            print(f"[DEBUG] context_init | Available prompts from MCP: {[p.get('name') for p in prompts]}", flush=True)
-            self.logger.info(f"context_init_prompts_available | count={len(prompts)} | names={[p.get('name') for p in prompts]}")
+            self.logger.debug(f"context_init_prompts_available | count={len(prompts)} | names={[p.get('name') for p in prompts]}")
 
             # Define required arguments for prompts that need them
             prompt_args = {
@@ -112,20 +116,17 @@ class RuntimeContextHelper:
                 if name:
                     # Use appropriate arguments for each prompt
                     args = prompt_args.get(name, {})
-                    print(f"[DEBUG] context_init | Loading prompt '{name}' with args {args}", flush=True)
+                    self.logger.debug(f"context_init_loading_prompt | name={name} | args={args}")
                     text = await self.mcp_service.get_prompt(name, args)
                     if text:
                         self._default_prompts[name] = text
-                        print(f"[DEBUG] context_init | ✓ Successfully loaded '{name}' ({len(text)} chars)", flush=True)
+                        self.logger.debug(f"context_init_prompt_loaded | name={name} | length={len(text)}")
                     else:
-                        print(f"[DEBUG] context_init | ✗ Failed to load '{name}' - got empty text", flush=True)
                         self.logger.warning(f"context_init_prompt_empty | name={name}")
 
-            print(f"[DEBUG] context_init | Final loaded prompts: {list(self._default_prompts.keys())}", flush=True)
             self.logger.info(f"Loaded {len(self._default_prompts)} default prompts: {list(self._default_prompts.keys())}")
 
-        except Exception as e:
-            print(f"[ERROR] context_init | Failed to load prompts: {e}", flush=True)
+        except (ConnectionError, TimeoutError, KeyError, ValueError) as e:
             self.logger.error(f"Failed to load default prompts: {e}")
             self._default_prompts = {}
     
@@ -135,18 +136,7 @@ class RuntimeContextHelper:
             self._default_tools = await self.mcp_service.get_default_tools(max_results=50)
             self.logger.info(f"Loaded {len(self._default_tools)} default tools")
 
-            # DEBUG: Log tool structure after loading
-            if self._default_tools:
-                import json
-                print(f"\n[DEBUG] context_init._load_default_tools | Total tools: {len(self._default_tools)}", flush=True)
-                weather_tool = next((t for t in self._default_tools if t.get('name') == 'get_weather'), None)
-                if weather_tool:
-                    print(f"[DEBUG] context_init | get_weather tool keys: {list(weather_tool.keys())}", flush=True)
-                    print(f"[DEBUG] context_init | Has inputSchema: {'inputSchema' in weather_tool}", flush=True)
-                    if 'inputSchema' in weather_tool:
-                        print(f"[DEBUG] context_init | inputSchema: {json.dumps(weather_tool['inputSchema'], indent=2)}", flush=True)
-
-        except Exception as e:
+        except (ConnectionError, TimeoutError, KeyError, ValueError) as e:
             self.logger.error(f"Failed to load default tools: {e}")
             self._default_tools = []
     
@@ -203,17 +193,6 @@ class RuntimeContextHelper:
                 max_results=max_results
             )
 
-            # DEBUG: Log search results after MCP call
-            if relevant_tools:
-                import json
-                print(f"\n[DEBUG] context_init.search_relevant_tools | Query: '{user_query[:50]}' | Results: {len(relevant_tools)}", flush=True)
-                weather_tool = next((t for t in relevant_tools if t.get('name') == 'get_weather'), None)
-                if weather_tool:
-                    print(f"[DEBUG] context_init.search | get_weather tool keys: {list(weather_tool.keys())}", flush=True)
-                    print(f"[DEBUG] context_init.search | Has inputSchema: {'inputSchema' in weather_tool}", flush=True)
-                    if 'inputSchema' in weather_tool:
-                        print(f"[DEBUG] context_init.search | inputSchema: {json.dumps(weather_tool['inputSchema'], indent=2)}", flush=True)
-
             # Cache the results with normalized query key
             self._set_cache_data(self._tool_search_cache, cache_key, relevant_tools)
 
@@ -247,19 +226,86 @@ class RuntimeContextHelper:
             self._default_resources = await self.mcp_service.get_default_resources(max_results=50)
             self.logger.info(f"Loaded {len(self._default_resources)} default resources")
 
-        except Exception as e:
+        except (ConnectionError, TimeoutError, KeyError, ValueError) as e:
             self.logger.error(f"Failed to load default resources: {e}")
             self._default_resources = []
 
-    async def _load_skills(self, skill_names: List[str]) -> Dict[str, str]:
+    def _find_local_skill(self, skill_name: str, project_root: Optional[str] = None) -> Optional[str]:
         """
-        Load skills from MCP vibe_skill resources.
+        Find and load a skill from local skills directory.
 
-        Skills are loaded via read_resource("vibe://skill/{name}") and return
-        the SKILL.md content which can be injected into the system prompt.
+        Configuration:
+        - ISA_SKILLS_DIR env var: Custom skills directory name (default: ".isa")
+
+        Searches in order:
+        1. project_root/{skills_dir}/skills/{skill_name}/SKILL.md (if project_root provided)
+        2. Current working directory {skills_dir}/skills/{skill_name}/SKILL.md
+        3. Walk up to 3 parent directories looking for {skills_dir}/skills/{skill_name}/SKILL.md
+
+        Args:
+            skill_name: Name of the skill to find
+            project_root: Optional explicit project root path
+
+        Returns:
+            Skill content if found locally, None otherwise
+        """
+        # Configurable skills directory (default: .isa)
+        skills_dir = os.environ.get("ISA_SKILLS_DIR", ".isa")
+
+        search_paths = []
+
+        # 1. Explicit project root
+        if project_root:
+            search_paths.append(Path(project_root) / skills_dir / "skills" / skill_name / "SKILL.md")
+
+        # 2. Current working directory
+        cwd = Path.cwd()
+        search_paths.append(cwd / skills_dir / "skills" / skill_name / "SKILL.md")
+
+        # 3. Walk up parent directories (max 3 levels)
+        current = cwd
+        for _ in range(3):
+            parent = current.parent
+            if parent == current:
+                break
+            search_paths.append(parent / skills_dir / "skills" / skill_name / "SKILL.md")
+            current = parent
+
+        # Try each path
+        for skill_path in search_paths:
+            try:
+                if skill_path.exists() and skill_path.is_file():
+                    content = skill_path.read_text(encoding='utf-8')
+                    if content.strip():
+                        self.logger.info(
+                            f"[PHASE:CONTEXT] skill_loaded_local | "
+                            f"skill={skill_name} | "
+                            f"path={skill_path} | "
+                            f"length={len(content)}"
+                        )
+                        return content
+            except Exception as e:
+                self.logger.debug(
+                    f"[PHASE:CONTEXT] skill_local_read_error | "
+                    f"skill={skill_name} | "
+                    f"path={skill_path} | "
+                    f"error={str(e)[:100]}"
+                )
+                continue
+
+        return None
+
+    async def _load_skills(self, skill_names: List[str], project_root: Optional[str] = None) -> Dict[str, str]:
+        """
+        Load skills with local-first strategy.
+
+        Loading priority:
+        1. Local .claude/skills/{name}/SKILL.md (agent-specific skills)
+        2. MCP vibe://skill/{name} (shared skills from MCP server)
 
         Args:
             skill_names: List of skill names (e.g., ["cdd", "tdd"])
+            project_root: Optional explicit project root for local skill search
 
         Returns:
             Dict mapping skill name to skill content
@@ -269,8 +315,18 @@ class RuntimeContextHelper:
 
         skills_start = time.time()
         loaded_skills = {}
+        local_count = 0
+        mcp_count = 0
 
         for skill_name in skill_names:
+            # 1. Try local first
+            local_content = self._find_local_skill(skill_name, project_root)
+            if local_content:
+                loaded_skills[skill_name] = local_content
+                local_count += 1
+                continue
+
+            # 2. Fall back to MCP
             try:
                 uri = f"vibe://skill/{skill_name}"
                 resource = await self.mcp_service.read_resource(uri)
@@ -285,8 +341,9 @@ class RuntimeContextHelper:
                         text = content.get("text", "")
                         if text:
                             loaded_skills[skill_name] = text
+                            mcp_count += 1
                             self.logger.info(
-                                f"[PHASE:CONTEXT] skill_loaded | "
+                                f"[PHASE:CONTEXT] skill_loaded_mcp | "
                                 f"skill={skill_name} | "
                                 f"length={len(text)}"
                             )
@@ -295,7 +352,8 @@ class RuntimeContextHelper:
                 self.logger.warning(
                     f"[PHASE:CONTEXT] skill_not_found | "
                     f"skill={skill_name} | "
-                    f"uri={uri}"
+                    f"uri={uri} | "
+                    f"tried_local=true"
                 )
 
             except Exception as e:
@@ -310,6 +368,8 @@ class RuntimeContextHelper:
             f"[PHASE:CONTEXT] skills_loaded | "
             f"requested={len(skill_names)} | "
             f"loaded={len(loaded_skills)} | "
+            f"local={local_count} | "
+            f"mcp={mcp_count} | "
             f"duration_ms={skills_duration}"
         )
 
@@ -410,6 +470,16 @@ class RuntimeContextHelper:
     def _set_cache_data(self, cache_dict: Dict, cache_key: str, data: Any):
         """Store data in cache with timestamp"""
         cache_dict[cache_key] = (data, time.time())
+
+    async def _get_cached_user_file_info(self, user_id: str) -> Dict[str, Any]:
+        """Get cached user file info to avoid repeated storage checks."""
+        cache_key = self._get_cache_key("user_file_info", user_id)
+        cached = self._get_cached_data(self._user_file_info_cache, cache_key)
+        if cached is not None:
+            return cached
+        info = await self._check_user_has_files(user_id)
+        self._set_cache_data(self._user_file_info_cache, cache_key, info)
+        return info
     
     def get_cache_stats(self) -> Dict[str, Any]:
         """Get cache performance statistics"""
@@ -423,7 +493,9 @@ class RuntimeContextHelper:
             'cache_sizes': {
                 'tool_searches': len(self._tool_search_cache),
                 'memory_contexts': len(self._memory_context_cache),
-                'prompts': len(self._prompt_cache)
+                'prompts': len(self._prompt_cache),
+                'runtime_contexts': len(self._runtime_context_cache),
+                'user_file_info': len(self._user_file_info_cache)
             }
         }
     
@@ -443,38 +515,45 @@ class RuntimeContextHelper:
         
         self.logger.info(f"Cache cleared: {cache_type or 'all'}")
     
-    async def _get_cached_memory_context(self, user_id: str, thread_id: str) -> str:
-        """Get memory context with caching"""
-        # Check cache first
-        cache_key = self._get_cache_key("memory_context", user_id, thread_id, max_length=2000)
+    async def _get_cached_memory_context(self, user_id: str, thread_id: str, query_context: str = None) -> str:
+        """Get memory context with caching
+
+        Args:
+            user_id: User identifier
+            thread_id: Session/thread identifier
+            query_context: User query for semantic search of relevant memories
+        """
+        # Check cache first - include query_context in cache key for query-specific results
+        cache_key = self._get_cache_key("memory_context", user_id, thread_id, query=query_context or "", max_length=2000)
         cached_context = self._get_cached_data(self._memory_context_cache, cache_key)
-        
+
         if cached_context is not None:
             self.logger.debug(f"Using cached memory context for user {user_id}, session {thread_id}")
             return cached_context
-        
+
         # Cache miss - fetch from MCP
         try:
             memory_context = await get_user_memory_context(
                 mcp_service=self.mcp_service,
                 user_id=user_id,
                 session_id=thread_id,
+                query_context=query_context,  # Pass query for semantic search
                 max_length=2000
             )
-            
+
             # Cache the result
             self._set_cache_data(self._memory_context_cache, cache_key, memory_context)
-            
-            self.logger.debug(f"Fetched and cached memory context for user {user_id}, session {thread_id}")
+
+            self.logger.debug(f"Fetched and cached memory context for user {user_id}, session {thread_id}, query={'present' if query_context else 'none'}")
             return memory_context
-            
+
         except Exception as e:
             self.logger.warning(f"Failed to get memory context: {e}")
             fallback_context = f"# Memory Context\n\nUser: {user_id}\nSession: {thread_id}\nNote: Memory unavailable"
-            
+
             # Cache the fallback too (with shorter TTL)
             self._set_cache_data(self._memory_context_cache, cache_key, fallback_context)
-            
+
             return fallback_context
     
     async def _check_user_has_files(self, user_id: str) -> Dict[str, Any]:
@@ -710,8 +789,9 @@ class RuntimeContextHelper:
             await self.initialize()
 
         # 1. Get aggregated memory context with caching
+        # Pass user_query for semantic search of relevant long-term memories
         memory_start = time.time()
-        memory_context = await self._get_cached_memory_context(user_id, thread_id)
+        memory_context = await self._get_cached_memory_context(user_id, thread_id, query_context=user_query)
         memory_duration = int((time.time() - memory_start) * 1000)
         memory_length = len(memory_context) if memory_context else 0
         self.logger.info(
@@ -719,11 +799,12 @@ class RuntimeContextHelper:
             f"user_id={user_id} | "
             f"thread_id={thread_id} | "
             f"memory_length={memory_length} | "
+            f"has_query_context={bool(user_query)} | "
             f"duration_ms={memory_duration}"
         )
         
         # 1.5. Check if user has files and get file context (if enabled and query provided)
-        user_file_info = await self._check_user_has_files(user_id)
+        user_file_info = await self._get_cached_user_file_info(user_id)
         file_context_data = {"file_context": "", "relevant_files": [], "file_count": 0}
         
         if enable_file_context and user_query and user_file_info.get("has_files", False):
@@ -749,24 +830,11 @@ class RuntimeContextHelper:
                 f"reason=no_files"
             )
         
-        # 2. Load skills if specified (SDK deterministic skill selection)
+        # 2. Skills & plan tool wiring (deterministic)
         loaded_skills = {}
         skill_injection = ""
         if skills:
-            loaded_skills = await self._load_skills(skills)
-            skill_injection = self._build_skill_injection(loaded_skills)
-            self.logger.info(
-                f"[PHASE:CONTEXT] skills_processed | "
-                f"user_id={user_id} | "
-                f"requested={len(skills)} | "
-                f"loaded={len(loaded_skills)} | "
-                f"injection_length={len(skill_injection)}"
-            )
-
-            # When skills are loaded, automatically include plan_tools
-            # Skills often require planning capabilities (create_execution_plan, etc.)
-            # Available MCP plan tools: adjust_plan, create_execution_plan, get_execution_history,
-            # get_plan_status, list_active_plans, replan_execution, test_review_execution_plan
+            # When skills are requested, include plan tools
             plan_tool_names = [
                 "create_execution_plan",
                 "replan_execution",
@@ -774,7 +842,7 @@ class RuntimeContextHelper:
                 "get_plan_status"
             ]
             if allowed_tools is None:
-                allowed_tools = plan_tool_names
+                allowed_tools = plan_tool_names.copy()
             else:
                 # Merge plan_tools with allowed_tools (avoid duplicates)
                 for tool_name in plan_tool_names:
@@ -787,169 +855,215 @@ class RuntimeContextHelper:
                 f"allowed_tools={allowed_tools}"
             )
 
-        # 3. Get tools - always search dynamically, then merge with specified tools
+        # 3. Static context caching (skills + tools)
+        static_cache_key = self._get_cache_key(
+            "runtime_static",
+            user_query or "",
+            tuple(sorted(allowed_tools or [])),
+            tuple(sorted(skills or [])),
+            user_file_info.get("has_files", False),
+            user_file_info.get("total_files", 0)
+        )
+        cached_static = self._get_cached_data(self._runtime_context_cache, static_cache_key)
+
         tools_start = time.time()
         specified_tools = []
         searched_tools = []
+        tools_to_use = []
+        tool_selection_mode = 'hybrid' if allowed_tools else 'dynamic'
+        specified_tools_count = len(allowed_tools) if allowed_tools else 0
 
-        # 3a. Load specified tools if provided (deterministic - must have)
-        if allowed_tools:
-            specified_tools = await self._get_specified_tools(allowed_tools)
-            self.logger.info(
-                f"[PHASE:CONTEXT] tools_specified | "
-                f"user_id={user_id} | "
-                f"requested={len(allowed_tools)} | "
-                f"loaded={len(specified_tools)}"
-            )
-
-        # 3b. Always search for relevant tools based on query (dynamic)
-        if user_query:
-            # Dynamic mode: Search for relevant tools + include defaults
-            search_start = time.time()
-            relevant_tools = await self.search_relevant_tools(user_query, max_results=6)  # Reduced from 15 to 6
-            search_duration = int((time.time() - search_start) * 1000)
-            relevant_tool_names = [t.get('name', 'unknown') for t in relevant_tools[:5]]  # Top 5 for logging
-            self.logger.info(
-                f"[PHASE:CONTEXT] tool_search | "
-                f"query='{user_query[:50]}...' | "
-                f"found={len(relevant_tools)} | "
-                f"top_tools={relevant_tool_names} | "
-                f"duration_ms={search_duration}"
-            )
-
-            # ALWAYS ensure critical tools are at the front
-            critical_tool_names = [
-                'create_execution_plan', 
-                'web_search', 
-                'web_crawl', 
-                'web_automation', 
-                'replan_execution',
-                # Composio tools for OAuth testing
-                'composio_gmail_send_message',
-                'composio_github_send_message',
-                'composio_list_available_apps'
-            ]
-            
-            # Add file-related tools if user has files
-            if user_file_info.get("has_files", False):
-                # Storage service RAG tools
-                rag_tool_names = [
-                    'search_knowledge',
-                    'generate_rag_response', 
-                    'list_user_files'
-                ]
-                
-                # MCP data analysis tools from digital_analytics_service
-                mcp_data_tools = [
-                    'data_ingest',       # data_tools.py - Ingest CSV/Excel files  
-                    'data_search',       # data_tools.py - Search data semantically
-                    'data_query',        # data_tools.py - Natural language queries
-                    'store_knowledge',   # digital_tools.py - Universal storage
-                    'search_knowledge',  # digital_tools.py - Universal search
-                    'knowledge_response' # digital_tools.py - RAG responses
-                ]
-                
-                # Add both sets of tools
-                critical_tool_names.extend(rag_tool_names)
-                critical_tool_names.extend(mcp_data_tools)
-                
-                self.logger.info(
-                    f"[PHASE:CONTEXT] file_tools_added | "
-                    f"user_id={user_id} | "
-                    f"file_count={user_file_info.get('total_files', 0)} | "
-                    f"storage_rag_tools={rag_tool_names} | "
-                    f"mcp_data_tools={mcp_data_tools}"
-                )
-            combined_tools = []
-            added_tool_names = set()
-
-            # Step 1: Add specified tools first (SDK deterministic - must have)
-            for tool in specified_tools:
-                tool_name = tool.get('name')
-                if tool_name and tool_name not in added_tool_names:
-                    combined_tools.append(tool)
-                    added_tool_names.add(tool_name)
-
-            # Step 2: Add critical tools from defaults
-            for tool_name in critical_tool_names:
-                if tool_name not in added_tool_names:
-                    tool = next((t for t in self._default_tools if t.get('name') == tool_name), None)
-                    if tool:
-                        combined_tools.append(tool)
-                        added_tool_names.add(tool_name)
-
-            # Step 3: Add missing critical tools from search results (fallback)
-            for tool in relevant_tools:
-                tool_name = tool.get('name')
-                if tool_name in critical_tool_names and tool_name not in added_tool_names:
-                    combined_tools.append(tool)
-                    added_tool_names.add(tool_name)
-
-            # Step 4: Add remaining relevant search results
-            for tool in relevant_tools:
-                tool_name = tool.get('name')
-                if tool_name not in added_tool_names:
-                    combined_tools.append(tool)
-                    added_tool_names.add(tool_name)
-                    if len(combined_tools) >= 15:  # Increased limit to accommodate specified + searched
-                        break
-
-            tools_to_use = combined_tools[:15]  # Hard limit to 15 total tools
-
-            # DEBUG: Log final tools_to_use before returning
-            if tools_to_use:
-                import json
-                print(f"\n[DEBUG] context_init.get_runtime_context | Final tools_to_use: {len(tools_to_use)}", flush=True)
-                weather_tool = next((t for t in tools_to_use if t.get('name') == 'get_weather'), None)
-                if weather_tool:
-                    print(f"[DEBUG] context_init.final | get_weather tool keys: {list(weather_tool.keys())}", flush=True)
-                    print(f"[DEBUG] context_init.final | Has inputSchema: {'inputSchema' in weather_tool}", flush=True)
-                    if 'inputSchema' in weather_tool:
-                        print(f"[DEBUG] context_init.final | inputSchema: {json.dumps(weather_tool['inputSchema'], indent=2)}", flush=True)
-
+        if cached_static is not None:
+            loaded_skills = cached_static.get("loaded_skills", {})
+            skill_injection = cached_static.get("skill_injection", "")
+            tools_to_use = copy.deepcopy(cached_static.get("available_tools", []))
+            tool_selection_mode = cached_static.get("tool_selection_mode", tool_selection_mode)
+            specified_tools_count = cached_static.get("specified_tools_count", specified_tools_count)
             tools_duration = int((time.time() - tools_start) * 1000)
-            final_tool_names = [t.get('name', 'unknown') for t in tools_to_use]
-
             self.logger.info(
-                f"[PHASE:CONTEXT] tools_finalized | "
-                f"session_id={thread_id} | "
+                f"[PHASE:CONTEXT] runtime_static_cache_hit | "
                 f"user_id={user_id} | "
-                f"specified={len(specified_tools)} | "
-                f"searched={len(relevant_tools)} | "
-                f"total={len(tools_to_use)} | "
-                f"tools={final_tool_names} | "
+                f"tools_count={len(tools_to_use)} | "
+                f"skills_loaded={len(loaded_skills)} | "
                 f"duration_ms={tools_duration}"
             )
         else:
-            # No query provided - use specified tools + default tools
-            combined_tools = []
-            added_tool_names = set()
+            # 2b. Load skills if specified (SDK deterministic skill selection)
+            if skills:
+                skill_start = time.time()
+                loaded_skills = await self._load_skills(skills)
+                skill_injection = self._build_skill_injection(loaded_skills)
+                skill_duration = int((time.time() - skill_start) * 1000)
+                self.logger.info(
+                    f"[PHASE:CONTEXT] skills_processed | "
+                    f"user_id={user_id} | "
+                    f"requested={len(skills)} | "
+                    f"loaded={len(loaded_skills)} | "
+                    f"injection_length={len(skill_injection)} | "
+                    f"duration_ms={skill_duration}"
+                )
 
-            # Add specified tools first
-            for tool in specified_tools:
-                tool_name = tool.get('name')
-                if tool_name and tool_name not in added_tool_names:
-                    combined_tools.append(tool)
-                    added_tool_names.add(tool_name)
+            # 3. Get tools - always search dynamically, then merge with specified tools
+            # 3a. Load specified tools if provided (deterministic - must have)
+            if allowed_tools:
+                specified_tools = await self._get_specified_tools(allowed_tools)
+                self.logger.info(
+                    f"[PHASE:CONTEXT] tools_specified | "
+                    f"user_id={user_id} | "
+                    f"requested={len(allowed_tools)} | "
+                    f"loaded={len(specified_tools)}"
+                )
 
-            # Add default tools
-            for tool in self._default_tools:
-                tool_name = tool.get('name')
-                if tool_name and tool_name not in added_tool_names:
-                    combined_tools.append(tool)
-                    added_tool_names.add(tool_name)
+            # 3b. Always search for relevant tools based on query (dynamic)
+            if user_query:
+                # Dynamic mode: Search for relevant tools + include defaults
+                search_start = time.time()
+                relevant_tools = await self.search_relevant_tools(user_query, max_results=6)  # Reduced from 15 to 6
+                search_duration = int((time.time() - search_start) * 1000)
+                relevant_tool_names = [t.get('name', 'unknown') for t in relevant_tools[:5]]  # Top 5 for logging
+                self.logger.info(
+                    f"[PHASE:CONTEXT] tool_search | "
+                    f"query='{user_query[:50]}...' | "
+                    f"found={len(relevant_tools)} | "
+                    f"top_tools={relevant_tool_names} | "
+                    f"duration_ms={search_duration}"
+                )
 
-            tools_to_use = combined_tools if combined_tools else self._default_tools
-            tools_duration = int((time.time() - tools_start) * 1000)
+                # ALWAYS ensure critical tools are at the front
+                critical_tool_names = [
+                    'create_execution_plan', 
+                    'web_search', 
+                    'web_crawl', 
+                    'web_automation', 
+                    'replan_execution',
+                    # Composio tools for OAuth testing
+                    'composio_gmail_send_message',
+                    'composio_github_send_message',
+                    'composio_list_available_apps'
+                ]
+                
+                # Add file-related tools if user has files
+                if user_file_info.get("has_files", False):
+                    # Storage service RAG tools
+                    rag_tool_names = [
+                        'search_knowledge',
+                        'generate_rag_response', 
+                        'list_user_files'
+                    ]
+                    
+                    # MCP data analysis tools from digital_analytics_service
+                    mcp_data_tools = [
+                        'data_ingest',       # data_tools.py - Ingest CSV/Excel files  
+                        'data_search',       # data_tools.py - Search data semantically
+                        'data_query',        # data_tools.py - Natural language queries
+                        'store_knowledge',   # digital_tools.py - Universal storage
+                        'search_knowledge',  # digital_tools.py - Universal search
+                        'knowledge_response' # digital_tools.py - RAG responses
+                    ]
+                    
+                    # Add both sets of tools
+                    critical_tool_names.extend(rag_tool_names)
+                    critical_tool_names.extend(mcp_data_tools)
+                    
+                    self.logger.info(
+                        f"[PHASE:CONTEXT] file_tools_added | "
+                        f"user_id={user_id} | "
+                        f"file_count={user_file_info.get('total_files', 0)} | "
+                        f"storage_rag_tools={rag_tool_names} | "
+                        f"mcp_data_tools={mcp_data_tools}"
+                    )
+                combined_tools = []
+                added_tool_names = set()
 
-            self.logger.info(
-                f"context_tools_loaded | "
-                f"session_id={thread_id} | "
-                f"user_id={user_id} | "
-                f"mode=no_query | "
-                f"specified={len(specified_tools)} | "
-                f"total_tools={len(tools_to_use)} | "
-                f"duration_ms={tools_duration}"
+                # Step 1: Add specified tools first (SDK deterministic - must have)
+                for tool in specified_tools:
+                    tool_name = tool.get('name')
+                    if tool_name and tool_name not in added_tool_names:
+                        combined_tools.append(tool)
+                        added_tool_names.add(tool_name)
+
+                # Step 2: Add critical tools from defaults
+                for tool_name in critical_tool_names:
+                    if tool_name not in added_tool_names:
+                        tool = next((t for t in self._default_tools if t.get('name') == tool_name), None)
+                        if tool:
+                            combined_tools.append(tool)
+                            added_tool_names.add(tool_name)
+
+                # Step 3: Add missing critical tools from search results (fallback)
+                for tool in relevant_tools:
+                    tool_name = tool.get('name')
+                    if tool_name in critical_tool_names and tool_name not in added_tool_names:
+                        combined_tools.append(tool)
+                        added_tool_names.add(tool_name)
+
+                # Step 4: Add remaining relevant search results
+                for tool in relevant_tools:
+                    tool_name = tool.get('name')
+                    if tool_name not in added_tool_names:
+                        combined_tools.append(tool)
+                        added_tool_names.add(tool_name)
+                        if len(combined_tools) >= 15:  # Increased limit to accommodate specified + searched
+                            break
+
+                tools_to_use = combined_tools[:15]  # Hard limit to 15 total tools
+
+                tools_duration = int((time.time() - tools_start) * 1000)
+                final_tool_names = [t.get('name', 'unknown') for t in tools_to_use]
+
+                self.logger.info(
+                    f"[PHASE:CONTEXT] tools_finalized | "
+                    f"session_id={thread_id} | "
+                    f"user_id={user_id} | "
+                    f"specified={len(specified_tools)} | "
+                    f"searched={len(relevant_tools)} | "
+                    f"total={len(tools_to_use)} | "
+                    f"tools={final_tool_names} | "
+                    f"duration_ms={tools_duration}"
+                )
+            else:
+                # No query provided - use specified tools + default tools
+                combined_tools = []
+                added_tool_names = set()
+
+                # Add specified tools first
+                for tool in specified_tools:
+                    tool_name = tool.get('name')
+                    if tool_name and tool_name not in added_tool_names:
+                        combined_tools.append(tool)
+                        added_tool_names.add(tool_name)
+
+                # Add default tools
+                for tool in self._default_tools:
+                    tool_name = tool.get('name')
+                    if tool_name and tool_name not in added_tool_names:
+                        combined_tools.append(tool)
+                        added_tool_names.add(tool_name)
+
+                tools_to_use = combined_tools if combined_tools else self._default_tools
+                tools_duration = int((time.time() - tools_start) * 1000)
+
+                self.logger.info(
+                    f"context_tools_loaded | "
+                    f"session_id={thread_id} | "
+                    f"user_id={user_id} | "
+                    f"mode=no_query | "
+                    f"specified={len(specified_tools)} | "
+                    f"total_tools={len(tools_to_use)} | "
+                    f"duration_ms={tools_duration}"
+                )
+
+            # Cache static context pieces
+            self._set_cache_data(
+                self._runtime_context_cache,
+                static_cache_key,
+                {
+                    "available_tools": copy.deepcopy(tools_to_use),
+                    "loaded_skills": copy.deepcopy(loaded_skills),
+                    "skill_injection": skill_injection,
+                    "tool_selection_mode": tool_selection_mode,
+                    "specified_tools_count": specified_tools_count,
+                }
             )
 
         # Log complete context preparation
@@ -989,8 +1103,8 @@ class RuntimeContextHelper:
 
             # 3. Final tools (specified + searched + critical merged)
             'available_tools': tools_to_use,
-            'tool_selection_mode': 'hybrid' if allowed_tools else 'dynamic',
-            'specified_tools_count': len(specified_tools) if allowed_tools else 0,
+            'tool_selection_mode': tool_selection_mode,
+            'specified_tools_count': specified_tools_count,
 
             # 4. Default prompts
             'default_prompts': self._default_prompts,
@@ -1080,7 +1194,7 @@ async def enhance_user_query(
             helper._set_cache_data(helper._prompt_cache, cache_key, user_query)
             return user_query
             
-    except Exception as e:
+    except (ConnectionError, TimeoutError, KeyError, ValueError) as e:
         logger.error(f"Query enhancement failed: {e}")
         return user_query
 
@@ -1128,8 +1242,6 @@ async def prepare_runtime_context(
     helper = await get_runtime_helper(mcp_url)
     helper_duration = int((time.time() - helper_start) * 1000)
     logger.info(f"context_helper_init | user_id={user_id} | thread_id={thread_id} | duration_ms={helper_duration}")
-    with open("/tmp/chat_timing_debug.log", "a") as f:
-        f.write(f"{thread_id} | helper_init: {helper_duration}ms\n")
 
     context_start = time.time()
     context = await helper.get_runtime_context(
@@ -1143,8 +1255,6 @@ async def prepare_runtime_context(
     )
     context_duration = int((time.time() - context_start) * 1000)
     logger.info(f"context_get_runtime | user_id={user_id} | thread_id={thread_id} | duration_ms={context_duration}")
-    with open("/tmp/chat_timing_debug.log", "a") as f:
-        f.write(f"{thread_id} | get_runtime_context: {context_duration}ms\n")
     
     # Optional query enhancement with prompt templates
     if user_query and prompt_name:
@@ -1231,7 +1341,7 @@ async def get_runtime_cache_stats(mcp_url: str = None) -> Dict[str, Any]:
     try:
         helper = await get_runtime_helper(mcp_url)
         return helper.get_cache_stats()
-    except Exception as e:
+    except (ConnectionError, TimeoutError, AttributeError) as e:
         logger.error(f"Failed to get cache stats: {e}")
         return {"error": str(e)}
 
@@ -1245,7 +1355,7 @@ async def clear_runtime_cache(cache_type: Optional[str] = None, mcp_url: str = N
         helper = await get_runtime_helper(mcp_url)
         helper.clear_cache(cache_type)
         return True
-    except Exception as e:
+    except (ConnectionError, TimeoutError, AttributeError) as e:
         logger.error(f"Failed to clear cache: {e}")
         return False
 

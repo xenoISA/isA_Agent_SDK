@@ -71,6 +71,35 @@ Structured Outputs Example:
 # Version
 __version__ = "0.1.0"
 
+# Error classes (import early, no dependencies)
+from .errors import (
+    ISASDKError,
+    ConnectionError,
+    TimeoutError,
+    CircuitBreakerError,
+    RateLimitError,
+    ExecutionError,
+    ToolExecutionError,
+    ModelError,
+    MaxIterationsError,
+    GraphExecutionError,
+    SessionError,
+    SessionNotFoundError,
+    SessionExpiredError,
+    CheckpointError,
+    ResumeError,
+    ValidationError,
+    SchemaError,
+    ConfigurationError,
+    PermissionError,
+    ToolPermissionError,
+    HILDeniedError,
+    HILTimeoutError,
+    MCPError,
+    MCPConnectionError,
+    MCPToolNotFoundError,
+)
+
 # Configuration options (no circular imports)
 from .options import (
     ISAAgentOptions,
@@ -161,11 +190,73 @@ def __getattr__(name):
             _lazy_modules["_triggers"] = importlib.import_module("._triggers", "isa_agent_sdk")
         return getattr(_lazy_modules["_triggers"], name)
 
+    # Custom Tools (@tool decorator)
+    if name in ("tool", "SDKTool", "SDKMCPServer", "create_sdk_mcp_server",
+                "register_sdk_server", "get_sdk_server", "execute_sdk_tool",
+                "is_sdk_tool"):
+        if "_tools" not in _lazy_modules:
+            _lazy_modules["_tools"] = importlib.import_module("._tools", "isa_agent_sdk")
+        return getattr(_lazy_modules["_tools"], name)
+
+    # Agent abstractions (single + multi-agent)
+    if name in ("Agent", "AgentRunResult", "MultiAgentOrchestrator", "MultiAgentResult",
+                "SwarmOrchestrator", "SwarmAgent", "SwarmRunResult", "SwarmState"):
+        if "_agents" not in _lazy_modules:
+            _lazy_modules["_agents"] = importlib.import_module(".agents", "isa_agent_sdk")
+        return getattr(_lazy_modules["_agents"], name)
+
+    # Bidirectional client
+    if name in ("ISAAgentClient", "ISAAgentClientSync", "ClientMode"):
+        if "_client" not in _lazy_modules:
+            _lazy_modules["_client"] = importlib.import_module("._client", "isa_agent_sdk")
+        return getattr(_lazy_modules["_client"], name)
+
+    # Project Context (ISA.md/CLAUDE.md support)
+    if name in ("load_project_context", "discover_project_context_file",
+                "format_project_context_for_prompt"):
+        if "_project_context" not in _lazy_modules:
+            _lazy_modules["_project_context"] = importlib.import_module(".utils.project_context", "isa_agent_sdk")
+        return getattr(_lazy_modules["_project_context"], name)
+
+    # A2A support
+    if name in ("A2AAgentCard", "A2AClient", "A2AServerAdapter", "register_a2a_fastapi_routes",
+                "build_auth_service_token_validator"):
+        if "_a2a" not in _lazy_modules:
+            _lazy_modules["_a2a"] = importlib.import_module(".a2a", "isa_agent_sdk")
+        return getattr(_lazy_modules["_a2a"], name)
+
     raise AttributeError(f"module 'isa_agent_sdk' has no attribute '{name}'")
 
 __all__ = [
     # Version
     "__version__",
+
+    # Error classes
+    "ISASDKError",
+    "ConnectionError",
+    "TimeoutError",
+    "CircuitBreakerError",
+    "RateLimitError",
+    "ExecutionError",
+    "ToolExecutionError",
+    "ModelError",
+    "MaxIterationsError",
+    "GraphExecutionError",
+    "SessionError",
+    "SessionNotFoundError",
+    "SessionExpiredError",
+    "CheckpointError",
+    "ResumeError",
+    "ValidationError",
+    "SchemaError",
+    "ConfigurationError",
+    "PermissionError",
+    "ToolPermissionError",
+    "HILDeniedError",
+    "HILTimeoutError",
+    "MCPError",
+    "MCPConnectionError",
+    "MCPToolNotFoundError",
 
     # Core functions
     "query",
@@ -254,11 +345,48 @@ __all__ = [
     "register_schedule_trigger",
     "register_event_pattern_trigger",
 
-    # HTTP Client
+    # Custom Tools (@tool decorator)
+    "tool",
+    "SDKTool",
+    "SDKMCPServer",
+    "create_sdk_mcp_server",
+    "register_sdk_server",
+    "get_sdk_server",
+    "execute_sdk_tool",
+    "is_sdk_tool",
+
+    # Agent abstractions
+    "Agent",
+    "AgentRunResult",
+    "MultiAgentOrchestrator",
+    "MultiAgentResult",
+    "SwarmOrchestrator",
+    "SwarmAgent",
+    "SwarmRunResult",
+    "SwarmState",
+
+    # HTTP Client (legacy)
     "ISAAgent",
     "ISAAgentSync",
     "AgentEvent",
     "AgentResponse",
     "SessionInfo",
     "EventType",
+
+    # Bidirectional Client (Claude SDK compatible)
+    "ISAAgentClient",
+    "ISAAgentClientSync",
+    "ClientMode",
+
+    # Project Context (ISA.md/CLAUDE.md support)
+    "load_project_context",
+    "discover_project_context_file",
+    "format_project_context_for_prompt",
+
+    # A2A
+    "A2AAgentCard",
+    "A2AClient",
+    "A2AServerAdapter",
+    "register_a2a_fastapi_routes",
+    "build_auth_service_token_validator",
 ]

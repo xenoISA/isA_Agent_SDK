@@ -143,7 +143,7 @@ class ChatService(BaseService):
                 completion_message="Proxy execution completed"
             ).to_dict()
 
-        except Exception as e:
+        except (ConnectionError, TimeoutError, RuntimeError, OSError) as e:
             self.logger.error(f"Proxy execution error: {e}")
             yield EventEmitter.system_error(
                 session_id,
@@ -156,7 +156,7 @@ class ChatService(BaseService):
                 try:
                     await pool_client.release_vm(instance_id)
                     self.logger.info(f"Released VM {instance_id}")
-                except Exception as e:
+                except (ConnectionError, TimeoutError, OSError) as e:
                     self.logger.warning(f"Failed to release VM {instance_id}: {e}")
 
     async def _execute_desktop_mode(
@@ -380,7 +380,7 @@ class ChatService(BaseService):
                 completion_message="Desktop execution completed"
             ).to_dict()
 
-        except Exception as e:
+        except (ConnectionError, TimeoutError, RuntimeError, OSError, ValueError) as e:
             self.logger.error(f"Desktop execution error: {e}")
             yield EventEmitter.system_error(
                 session_id,
@@ -561,9 +561,9 @@ class ChatService(BaseService):
                     f"selected_graph_type={selected_type} | "
                     f"select_duration_ms={auto_select_duration}"
                 )
-                # DEBUG: Write to file for easier debugging
-                with open("/tmp/chat_timing_debug.log", "a") as f:
-                    f.write(f"{session_id} | select_graph: {auto_select_duration}ms\n")
+                self.logger.debug(
+                f"graph_selection_timing | session_id={session_id} | select_graph_ms={auto_select_duration}"
+            )
                 build_start = time.time()
                 selected_graph = await graph_registry.build_graph(
                     user_id=user_id,
@@ -576,9 +576,6 @@ class ChatService(BaseService):
                     f"user_id={user_id} | "
                     f"duration_ms={build_duration}"
                 )
-                # DEBUG: Write to file
-                with open("/tmp/chat_timing_debug.log", "a") as f:
-                    f.write(f"{session_id} | build_graph: {build_duration}ms\n")
             else:
                 # Use user's active graph or default
                 selected_graph = await graph_registry.get_active_graph(
@@ -772,7 +769,7 @@ class ChatService(BaseService):
                         f"no_checkpointer | "
                         f"session_id={session_id}"
                     )
-            except Exception as e:
+            except (AttributeError, KeyError, TypeError) as e:
                 self.logger.warning(
                     f"checkpoint_check_error | "
                     f"session_id={session_id} | "
@@ -832,7 +829,7 @@ class ChatService(BaseService):
                             f"type={msg_type} | "
                             f"content={msg_content}"
                         )
-            except Exception as e:
+            except (AttributeError, KeyError, TypeError) as e:
                 self.logger.warning(f"[CHECKPOINT:PRE-EXEC] Failed to get pre-execution state: {e}")
 
             first_graph_event_received = False
@@ -919,7 +916,7 @@ class ChatService(BaseService):
                                 f"type={msg_type} | "
                                 f"content={msg_content}"
                             )
-                except Exception as e:
+                except (AttributeError, KeyError, TypeError) as e:
                     self.logger.warning(f"[CHECKPOINT:POST-EXEC] Failed to get post-execution state: {e}")
 
                 # Extract final state for memory and billing processing
@@ -937,7 +934,7 @@ class ChatService(BaseService):
                             if state_snapshot:
                                 # Support both old (.values) and new (.checkpoint) API
                                 final_state = getattr(state_snapshot, 'checkpoint', getattr(state_snapshot, 'values', None))
-                    except Exception as e:
+                    except (AttributeError, KeyError, TypeError) as e:
                         self.logger.debug(f"Could not get final state from checkpointer: {e}")
                     
                     # Handle memory update if we have final state and MCP service
@@ -980,7 +977,7 @@ class ChatService(BaseService):
                                 yield EventEmitter.memory_curating(session_id, curation_type).to_dict()
                                 yield EventEmitter.memory_curated(session_id, curation_type).to_dict()
 
-                        except Exception as e:
+                        except (ConnectionError, TimeoutError, KeyError, TypeError, ValueError) as e:
                             self.logger.error(
                                 f"memory_update_error | "
                                 f"session_id={session_id} | "
@@ -1019,7 +1016,7 @@ class ChatService(BaseService):
                             error_message=billing_result.error_message
                         ).to_dict()
 
-                    except Exception as e:
+                    except (ConnectionError, TimeoutError, ValueError, AttributeError) as e:
                         self.logger.error(
                             f"billing_error | "
                             f"session_id={session_id} | "
@@ -1234,21 +1231,21 @@ class ChatService(BaseService):
                             if state_snapshot:
                                 # Support both old (.values) and new (.checkpoint) API
                                 final_state = getattr(state_snapshot, 'checkpoint', getattr(state_snapshot, 'values', None))
-                    except Exception as e:
+                    except (AttributeError, KeyError, TypeError) as e:
                         self.logger.debug(f"Could not get final state from checkpointer: {e}")
-                    
+
                     # Handle memory update if we have final state and MCP service
                     if final_state and runtime_context.get("mcp_service"):
                         try:
                             state_values = list(final_state.values())[0] if isinstance(final_state, dict) and final_state else final_state
-                            
+
                             memory_result = await update_context_after_chat(
                                 session_id=session_id,
                                 user_id=user_id,
                                 final_state=state_values,
                                 mcp_service=runtime_context["mcp_service"]
                             )
-                            
+
                             yield EventEmitter.system_info(
                                 session_id,
                                 f"Memory updated: {memory_result.get('memories_stored', 0)} memories stored",
@@ -1257,14 +1254,14 @@ class ChatService(BaseService):
                                 resumed=True,
                                 event_type="memory_update"
                             ).to_dict()
-                            
-                        except Exception as e:
+
+                        except (ConnectionError, TimeoutError, KeyError, TypeError, ValueError) as e:
                             self.logger.warning(f"Resume memory update failed: {e}")
-                    
+
                     # Finalize billing for resume
                     try:
                         billing_result = await billing_service.finalize_billing(billing_handler)
-                        
+
                         yield EventEmitter.system_billing(
                             session_id,
                             billing_result.total_credits,
@@ -1275,8 +1272,8 @@ class ChatService(BaseService):
                             error_message=billing_result.error_message,
                             resumed=True
                         ).to_dict()
-                        
-                    except Exception as e:
+
+                    except (ConnectionError, TimeoutError, ValueError, AttributeError) as e:
                         self.logger.warning(f"Resume billing finalization failed: {e}")
                         yield EventEmitter.system_error(
                             session_id,
@@ -1286,22 +1283,22 @@ class ChatService(BaseService):
                             resumed=True,
                             event_type="billing_error"
                         ).to_dict()
-                    
+
                     # Send resume completion event
                     yield EventEmitter.session_end(
                         session_id,
                         completion_message="Resume execution completed"
                     ).to_dict()
-                    
-                except Exception as e:
+
+                except (KeyError, TypeError, ValueError, AttributeError) as e:
                     self.logger.warning(f"Resume post-processing error: {e}")
                     # Still send completion even if post-processing fails
                     yield EventEmitter.session_end(
                         session_id,
                         completion_message="Resume execution completed with post-processing issues"
                     ).to_dict()
-                
-        except Exception as e:
+
+        except (RuntimeError, ConnectionError, TimeoutError, ValueError, KeyError, TypeError) as e:
             self.logger.error(f"Resume execution error: {e}")
             yield EventEmitter.system_error(
                 session_id,
@@ -1337,7 +1334,7 @@ class ChatService(BaseService):
                 "message": f"Resume completed with {len(events)} events",
                 "next_step": "completed"
             }
-        except Exception as e:
+        except (RuntimeError, ConnectionError, TimeoutError, ValueError, KeyError, TypeError) as e:
             return {
                 "success": False,
                 "thread_id": thread_id,
@@ -1368,7 +1365,7 @@ class ChatService(BaseService):
             # Get checkpointer and check for state
             from isa_agent_sdk.services.persistence import get_durable_service
             durable_service = get_durable_service()
-            
+
             # For now, return basic status - could be enhanced with real checkpoint data
             return {
                 "status": "ready",
@@ -1378,7 +1375,7 @@ class ChatService(BaseService):
                 "checkpoints": 0,
                 "durable": durable_service.get_service_info()["features"]["durable_execution"]
             }
-        except Exception as e:
+        except (ImportError, KeyError, AttributeError) as e:
             return {
                 "status": "error",
                 "thread_id": thread_id,
@@ -1386,8 +1383,8 @@ class ChatService(BaseService):
             }
     
     async def get_execution_history(
-        self, 
-        thread_id: str, 
+        self,
+        thread_id: str,
         limit: int = 50
     ) -> Dict[str, Any]:
         """Get execution history for thread"""
@@ -1399,7 +1396,7 @@ class ChatService(BaseService):
                 "thread_id": thread_id,
                 "limit": limit
             }
-        except Exception as e:
+        except (KeyError, TypeError, ValueError) as e:
             return {
                 "error": str(e),
                 "thread_id": thread_id
@@ -1419,7 +1416,7 @@ class ChatService(BaseService):
                 "checkpoint_id": checkpoint_id or "latest",
                 "message": "Rollback completed successfully"
             }
-        except Exception as e:
+        except (KeyError, TypeError, ValueError, RuntimeError) as e:
             return {
                 "success": False,
                 "thread_id": thread_id,
@@ -1431,10 +1428,10 @@ class ChatService(BaseService):
         try:
             from isa_agent_sdk.services.persistence import get_durable_service
             from isa_agent_sdk.services.human_in_the_loop import get_hil_service
-            
+
             durable_service = get_durable_service()
             hil_service = get_hil_service()
-            
+
             return {
                 "interrupt_features": {
                     "human_in_loop": True,
@@ -1449,7 +1446,7 @@ class ChatService(BaseService):
                     "environment": durable_service.environment
                 }
             }
-        except Exception as e:
+        except (ImportError, KeyError, AttributeError) as e:
             return {
                 "error": str(e),
                 "interrupt_features": {},

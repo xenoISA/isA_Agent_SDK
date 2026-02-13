@@ -141,6 +141,10 @@ Features:
 - Periodic checkpoints
 - Resume capability
 
+Notes:
+- Checkpoints are optional; session history persists even without them.
+- Use collaborative mode only if you want resumable execution.
+
 ### Proactive Mode
 
 For event-driven autonomous operation:
