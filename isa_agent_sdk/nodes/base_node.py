@@ -12,6 +12,7 @@ Functionality is organized into mixins for maintainability:
 - ModelCallingMixin: LLM model calling
 """
 from abc import ABC, abstractmethod
+import contextvars
 import logging
 from typing import Dict, Any, Optional
 from langchain_core.runnables import RunnableConfig
@@ -20,6 +21,14 @@ from isa_agent_sdk.agent_types.agent_state import AgentState
 from isa_agent_sdk.clients.mcp_client import MCPClient
 from isa_agent_sdk.graphs.utils.context_schema import ContextSchema
 from isa_agent_sdk.utils.logger import agent_logger
+
+# Context variables for concurrency-safe state/config access
+_node_state_var: contextvars.ContextVar[Optional[AgentState]] = contextvars.ContextVar(
+    '_node_state_var', default=None
+)
+_node_config_var: contextvars.ContextVar[Optional[RunnableConfig]] = contextvars.ContextVar(
+    '_node_config_var', default=None
+)
 
 # Import mixins
 from .mixins import (
@@ -75,6 +84,26 @@ class BaseNode(
 
         # Cache dependency services to avoid repeated retrieval
         self._mcp_service_cache = None
+
+    @property
+    def state(self) -> Optional[AgentState]:
+        """Get current state from context var (concurrency-safe)."""
+        return _node_state_var.get(None)
+
+    @state.setter
+    def state(self, value: AgentState):
+        """Set current state in context var (concurrency-safe)."""
+        _node_state_var.set(value)
+
+    @property
+    def config(self) -> Optional[RunnableConfig]:
+        """Get current config from context var (concurrency-safe)."""
+        return _node_config_var.get(None)
+
+    @config.setter
+    def config(self, value: RunnableConfig):
+        """Set current config in context var (concurrency-safe)."""
+        _node_config_var.set(value)
 
     async def get_initialized_mcp_service(self, config: RunnableConfig) -> Optional[MCPClient]:
         """

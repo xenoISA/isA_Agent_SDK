@@ -177,11 +177,9 @@ class RuntimeContextHelper:
                     f"tools_count={len(cached_tools)} | "
                     f"duration_ms={cache_hit_duration}"
                 )
-                self._cache_stats['hits'] += 1
                 return cached_tools
 
             # Cache miss - perform search
-            self._cache_stats['misses'] += 1
             self.logger.info(
                 f"[PHASE:CONTEXT] tool_search_cache_miss | "
                 f"query='{user_query[:50]}' | "
@@ -1134,10 +1132,10 @@ _runtime_helper = None
 
 
 async def get_runtime_helper(mcp_url: str = None) -> RuntimeContextHelper:
+    """Get global runtime helper instance"""
     if mcp_url is None:
         from isa_agent_sdk.core.config import settings
         mcp_url = settings.resolved_mcp_server_url + "/mcp"
-    """Get global runtime helper instance"""
     global _runtime_helper
     
     if _runtime_helper is None:
@@ -1334,10 +1332,10 @@ def create_initial_state(user_query: str) -> Dict[str, Any]:
 
 
 async def get_runtime_cache_stats(mcp_url: str = None) -> Dict[str, Any]:
+    """Get runtime cache performance statistics"""
     if mcp_url is None:
         from isa_agent_sdk.core.config import settings
         mcp_url = settings.resolved_mcp_server_url + "/mcp"
-    """Get runtime cache performance statistics"""
     try:
         helper = await get_runtime_helper(mcp_url)
         return helper.get_cache_stats()
@@ -1347,10 +1345,10 @@ async def get_runtime_cache_stats(mcp_url: str = None) -> Dict[str, Any]:
 
 
 async def clear_runtime_cache(cache_type: Optional[str] = None, mcp_url: str = None):
+    """Clear runtime cache"""
     if mcp_url is None:
         from isa_agent_sdk.core.config import settings
         mcp_url = settings.resolved_mcp_server_url + "/mcp"
-    """Clear runtime cache"""
     try:
         helper = await get_runtime_helper(mcp_url)
         helper.clear_cache(cache_type)

@@ -251,6 +251,7 @@ class SwarmOrchestrator:
             async for msg in swarm_agent.agent.stream(
                 current_prompt, options=modified_options,
             ):
+                msg.metadata = msg.metadata or {}
                 msg.metadata["agent"] = active_name
                 yield msg
 
@@ -331,6 +332,7 @@ class SwarmOrchestrator:
         agent_outputs: Dict[str, AgentRunResult] = {}
         all_messages: List[AgentMessage] = []
         task_results: Dict[str, str] = {}
+        _state_lock = asyncio.Lock()
 
         for wavefront in wavefronts:
             # Group tasks by assigned agent
@@ -360,14 +362,16 @@ class SwarmOrchestrator:
 
                     try:
                         result = await swarm_agent.agent.run(task_prompt)
-                        DAGScheduler.mark_task_completed(dag, task_id, result.text)
-                        task_results[task_id] = result.text
-                        agent_outputs[f"{agent_name}:{task_id}"] = result
-                        all_messages.extend(result.messages)
-                        if result.shared_state:
-                            state.update(result.shared_state)
+                        async with _state_lock:
+                            DAGScheduler.mark_task_completed(dag, task_id, result.text)
+                            task_results[task_id] = result.text
+                            agent_outputs[f"{agent_name}:{task_id}"] = result
+                            all_messages.extend(result.messages)
+                            if result.shared_state:
+                                state.update(result.shared_state)
                     except Exception as exc:
-                        DAGScheduler.mark_task_failed(dag, task_id, str(exc))
+                        async with _state_lock:
+                            DAGScheduler.mark_task_failed(dag, task_id, str(exc))
                         logger.error(
                             "DAG task '%s' (agent '%s') failed: %s",
                             task_id, agent_name, exc,

@@ -68,8 +68,8 @@ class AgentState(TypedDict):
     execution_mode: Annotated[Optional[str], preserve_latest]  # "sequential" or "parallel"
 
     # Task execution tracking
-    completed_task_count: Annotated[Optional[int], sum_numeric]
-    failed_task_count: Annotated[Optional[int], sum_numeric]
+    completed_task_count: Annotated[Optional[int], preserve_latest]
+    failed_task_count: Annotated[Optional[int], preserve_latest]
 
     # Execution plan from planning tools
     execution_plan: Annotated[Optional[Dict[str, Any]], preserve_latest]
