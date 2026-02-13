@@ -138,6 +138,12 @@ def parse_handoff_from_response(
         return HandoffResult(action=HandoffAction.COMPLETE)
 
     # No directive found — treat as complete (safe default)
+    tail_snippet = response_text[-80:] if len(response_text) > 80 else response_text
+    logger.info(
+        "No handoff directive found in response; defaulting to COMPLETE. "
+        "Response tail: %r",
+        tail_snippet,
+    )
     return HandoffResult(action=HandoffAction.COMPLETE)
 
 

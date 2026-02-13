@@ -173,6 +173,17 @@ def query_sync(
         for msg in query_sync("Hello"):
             print(msg.content)
     """
+    # Detect already-running event loop (e.g. called from async context)
+    try:
+        asyncio.get_running_loop()
+        raise RuntimeError(
+            "query_sync() cannot be called from an async context. "
+            "Use query() (async) instead, or run from a synchronous context."
+        )
+    except RuntimeError as e:
+        if "no current event loop" not in str(e).lower() and "no running event loop" not in str(e).lower():
+            raise
+
     # Always create a fresh event loop for sync execution
     # This avoids issues with closed loops from previous asyncio.run() calls
     loop = asyncio.new_event_loop()
@@ -1033,6 +1044,17 @@ async def ask(prompt: str, **kwargs) -> str:
 
 def ask_sync(prompt: str, **kwargs) -> str:
     """Synchronous version of ask()"""
+    # Detect already-running event loop (e.g. called from async context)
+    try:
+        asyncio.get_running_loop()
+        raise RuntimeError(
+            "ask_sync() cannot be called from an async context. "
+            "Use ask() (async) instead, or run from a synchronous context."
+        )
+    except RuntimeError as e:
+        if "no current event loop" not in str(e).lower() and "no running event loop" not in str(e).lower():
+            raise
+
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
 
@@ -1144,6 +1166,17 @@ def resume_sync(
     options: Optional[ISAAgentOptions] = None,
 ) -> Iterator[AgentMessage]:
     """Synchronous version of resume()"""
+    # Detect already-running event loop (e.g. called from async context)
+    try:
+        asyncio.get_running_loop()
+        raise RuntimeError(
+            "resume_sync() cannot be called from an async context. "
+            "Use resume() (async) instead, or run from a synchronous context."
+        )
+    except RuntimeError as e:
+        if "no current event loop" not in str(e).lower() and "no running event loop" not in str(e).lower():
+            raise
+
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
 

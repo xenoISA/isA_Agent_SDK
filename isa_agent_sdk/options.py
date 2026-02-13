@@ -307,6 +307,10 @@ class MCPServerConfig:
     def __post_init__(self):
         if not self.command and not self.url:
             raise ValueError("MCPServerConfig requires either 'command' or 'url'")
+        if self.url and not any(self.url.startswith(p) for p in ("http://", "https://", "ws://", "wss://")):
+            raise ValueError(
+                f"url must start with http://, https://, ws://, or wss://, got '{self.url}'"
+            )
 
 
 @dataclass
@@ -630,6 +634,19 @@ class ISAAgentOptions:
             self.tool_discovery = ToolDiscoveryMode(self.tool_discovery)
         if isinstance(self.guardrail_mode, str):
             self.guardrail_mode = GuardrailMode(self.guardrail_mode)
+
+        # Validate numeric ranges
+        if self.max_iterations is not None and self.max_iterations <= 0:
+            raise ValueError(f"max_iterations must be positive, got {self.max_iterations}")
+        if not (0.0 <= self.failsafe_confidence_threshold <= 1.0):
+            raise ValueError(
+                f"failsafe_confidence_threshold must be in [0.0, 1.0], "
+                f"got {self.failsafe_confidence_threshold}"
+            )
+        if self.summarization_threshold is not None and self.summarization_threshold <= 0:
+            raise ValueError(
+                f"summarization_threshold must be positive, got {self.summarization_threshold}"
+            )
 
         # Convert MCP server dicts to MCPServerConfig (preserve SDKMCPServer as-is)
         if self.mcp_servers:
