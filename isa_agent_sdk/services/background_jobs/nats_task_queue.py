@@ -43,39 +43,62 @@ class NATSTaskQueue:
         self.nats_client: Optional[AsyncNATSClient] = None
         self._connected = False
 
-    async def connect(self):
-        """Establish NATS connection and initialize stream"""
-        try:
-            # Use ConsulRegistry for service discovery
-            import os
+    async def connect(self, max_retries: int = 3, base_delay: float = 1.0):
+        """Establish NATS connection and initialize stream with exponential backoff.
 
-            from isa_common.consul_client import ConsulRegistry
+        Args:
+            max_retries: Maximum number of connection attempts
+            base_delay: Initial delay in seconds (doubles each retry)
+        """
+        import asyncio
+        import os
 
-            # Use environment variables for Consul connection
-            consul_host = os.getenv("CONSUL_HOST", "localhost")
-            consul_port = int(os.getenv("CONSUL_PORT", "8500"))
+        from isa_common.consul_client import ConsulRegistry
 
-            consul_registry = ConsulRegistry(
-                consul_host=consul_host, consul_port=consul_port
-            )
+        last_error: Optional[Exception] = None
 
-            self.nats_client = AsyncNATSClient(
-                user_id=self.user_id,
-                consul_registry=consul_registry,
-                service_name_override="nats_grpc_service",  # Use correct Consul service name (underscore)
-            )
+        for attempt in range(1, max_retries + 1):
+            try:
+                # Use environment variables for Consul connection
+                consul_host = os.getenv("CONSUL_HOST", "localhost")
+                consul_port = int(os.getenv("CONSUL_PORT", "8500"))
 
-            self._connected = True
-            logger.info(
-                "NATS task queue connected via Consul discovery (nats_grpc_service)"
-            )
+                consul_registry = ConsulRegistry(
+                    consul_host=consul_host, consul_port=consul_port
+                )
 
-            # Initialize JetStream
-            await self._initialize_stream()
+                self.nats_client = AsyncNATSClient(
+                    user_id=self.user_id,
+                    consul_registry=consul_registry,
+                    service_name_override="nats_grpc_service",
+                )
 
-        except Exception as e:
-            logger.error(f"Failed to connect to NATS: {e}")
-            raise
+                self._connected = True
+                logger.info(
+                    "NATS task queue connected via Consul discovery (nats_grpc_service)"
+                )
+
+                # Initialize JetStream
+                await self._initialize_stream()
+                return
+
+            except Exception as e:
+                last_error = e
+                if attempt < max_retries:
+                    delay = base_delay * (2 ** (attempt - 1))
+                    logger.warning(
+                        f"NATS connection attempt {attempt}/{max_retries} failed: {e}. "
+                        f"Retrying in {delay:.1f}s..."
+                    )
+                    await asyncio.sleep(delay)
+                else:
+                    logger.error(
+                        f"Failed to connect to NATS after {max_retries} attempts: {e}"
+                    )
+
+        raise RuntimeError(
+            f"NATS connection failed after {max_retries} attempts"
+        ) from last_error
 
     async def disconnect(self):
         """Close NATS connection"""

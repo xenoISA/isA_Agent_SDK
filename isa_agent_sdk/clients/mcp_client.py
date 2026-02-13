@@ -148,6 +148,7 @@ class MCPClient:
             Tool result dict (raw MCP response format)
         """
         if not self._client:
+            self.logger.warning("MCP call_tool('%s') called but client is not initialized", name)
             return {"error": "MCP client not available"}
 
         start_time = time()
@@ -175,7 +176,11 @@ class MCPClient:
 
         except Exception as e:
             self.metrics['total_errors'] += 1
-            self.logger.error(f"MCP call_tool failed: {name}", extra={'error': str(e)})
+            self.logger.error(
+                f"MCP call_tool failed: {name} — {type(e).__name__}: {e}",
+                extra={'error': str(e), 'tool_name': name},
+                exc_info=True,
+            )
             return {"error": str(e)}
 
     async def call_tool_and_parse(

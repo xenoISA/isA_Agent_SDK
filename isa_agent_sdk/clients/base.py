@@ -139,13 +139,15 @@ class BaseClient(ABC, Generic[T]):
         elif mode == ClientMode.AUTO:
             # Try cloud first, fallback to local
             if self.config.service_url:
-                if await self._init_cloud():
+                cloud_ok = await self._init_cloud()
+                if cloud_ok:
                     return True
 
                 if self.config.fallback_to_local:
                     logger.warning(
-                        f"{self.__class__.__name__}: Cloud backend unavailable, "
-                        "falling back to local"
+                        f"{self.__class__.__name__}: Cloud backend unavailable "
+                        f"(url={self.config.service_url}), falling back to local. "
+                        "Check service logs above for the root cause."
                     )
                     return await self._init_local()
                 else:

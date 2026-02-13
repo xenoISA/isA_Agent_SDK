@@ -63,7 +63,12 @@ class AgentExecutorNode(BaseNode):
         """
         # Get context for mode determination
         context = self.get_runtime_context(config)
-        
+
+        # Apply configurable execution params from options (override defaults)
+        self.max_parallel_tasks = context.get("max_parallel_tasks", self.max_parallel_tasks)
+        self.max_task_retries = context.get("max_task_retries", self.max_task_retries)
+        self.task_timeout = context.get("task_timeout", self.task_timeout)
+
         # Determine and apply execution mode enhancements
         execution_mode_type = self._determine_execution_mode(state, context)
         
