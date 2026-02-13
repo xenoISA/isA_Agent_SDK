@@ -11,7 +11,7 @@ Implements the four agent creation flows:
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, Optional, Tuple
 
 from .agent_config_store import (
@@ -59,7 +59,7 @@ class AgentCreationService:
             graph_type=graph_type,
         )
 
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         record = AgentConfigRecord(
             id=await self.store.new_config_id(),
             owner_id=owner_id,
@@ -117,7 +117,7 @@ class AgentCreationService:
             owner_id=owner_id,
             name=merged["name"],
             description=merged.get("description", ""),
-            model_id=merged.get("model_id") or overrides.get("model_id") or "gpt-5-nano",
+            model_id=merged.get("model_id") or "gpt-5-nano",
             system_prompt=merged.get("system_prompt", ""),
             tools=merged.get("tools"),
             skills=merged.get("skills"),
@@ -273,7 +273,7 @@ class AgentCreationService:
                 "agents list is empty or missing id/name"
             )
 
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         record = MultiAgentSpecRecord(
             id=await self.store.new_multi_id(),
             owner_id=owner_id,

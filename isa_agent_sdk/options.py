@@ -769,4 +769,6 @@ __all__ = [
     "HookMatcher",
     "PoolConfig",
     "TriggerConfig",
+    "SystemPromptConfig",
+    "SystemPromptPreset",
 ]

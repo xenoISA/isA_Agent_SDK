@@ -75,14 +75,6 @@ class DAGScheduler:
 
         # Cycle detection via Kahn's algorithm
         if not errors:
-            in_degree: Dict[str, int] = {tid: 0 for tid in all_ids}
-            for task in dag.tasks.values():
-                for dep_id in task.depends_on:
-                    if dep_id in in_degree:
-                        # dep_id -> task (task depends on dep_id)
-                        # We track in-degree of each task
-                        pass
-            # Recompute: in-degree = number of dependencies for each task
             in_degree = {tid: len(dag.tasks[tid].depends_on) for tid in all_ids}
 
             queue = deque(tid for tid, deg in in_degree.items() if deg == 0)

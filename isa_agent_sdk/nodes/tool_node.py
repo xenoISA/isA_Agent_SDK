@@ -426,21 +426,25 @@ class ToolNode(BaseNode):
             Plan data dict if create_execution_plan succeeded, None otherwise
         """
         # Check if create_execution_plan was called
-        plan_tool_index = None
-        for i, (tool_name, tool_args, tool_call_id) in enumerate(tool_info_list):
+        plan_tool_call_id = None
+        for tool_name, tool_args, tool_call_id in tool_info_list:
             if tool_name == 'create_execution_plan':
-                plan_tool_index = i
+                plan_tool_call_id = tool_call_id
                 break
 
-        if plan_tool_index is None:
+        if plan_tool_call_id is None:
             return None
 
-        # Find the corresponding tool message
-        if plan_tool_index >= len(tool_messages):
+        # Find the corresponding tool message by matching tool_call_id
+        plan_message = None
+        for msg in tool_messages:
+            if getattr(msg, 'tool_call_id', None) == plan_tool_call_id:
+                plan_message = msg
+                break
+
+        if plan_message is None:
             self.logger.warning("[AUTONOMOUS] Plan tool called but no response message found")
             return None
-
-        plan_message = tool_messages[plan_tool_index]
         content = str(plan_message.content)
 
         # Parse the plan response

@@ -241,11 +241,34 @@ class A2AServerAdapter:
         self._runner = runner or self._run_with_sdk
         self._tasks: Dict[str, Dict[str, Any]] = {}
         self._push_config: Dict[str, Dict[str, Any]] = {}
+        self._max_tasks = 1000
+        self._task_ttl_seconds = 3600  # 1 hour
 
     async def _run_with_sdk(self, prompt: str, options: Optional[ISAAgentOptions]) -> str:
         return await ask(prompt, options=options or self.options)
 
+    def _evict_stale_tasks(self) -> None:
+        """Remove completed/failed tasks older than TTL, enforce max size."""
+        if len(self._tasks) <= self._max_tasks:
+            return
+        now = datetime.now(timezone.utc)
+        to_delete = []
+        for tid, task in self._tasks.items():
+            status = task.get("status", {}).get("state", "")
+            if status in ("completed", "failed"):
+                updated = task.get("status", {}).get("timestamp")
+                if updated:
+                    try:
+                        age = (now - datetime.fromisoformat(updated)).total_seconds()
+                        if age > self._task_ttl_seconds:
+                            to_delete.append(tid)
+                    except (ValueError, TypeError):
+                        to_delete.append(tid)
+        for tid in to_delete:
+            del self._tasks[tid]
+
     async def _execute_task(self, task_id: str, prompt: str) -> None:
+        self._evict_stale_tasks()
         self._tasks[task_id] = _task_payload(task_id, "working")
         try:
             text = await self._runner(prompt, self.options)
