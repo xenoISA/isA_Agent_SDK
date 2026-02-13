@@ -85,7 +85,7 @@ class ServiceConfig:
             mcp_service_url=resolve_url("MCP_SERVER_URL", "mcp_service", "http://localhost:8081"),
             data_service_url=resolve_url("DATA_SERVICE_URL", "data_service", "http://localhost:8084"),
             web_service_url=resolve_url("WEB_SERVICE_URL", "web_service", "http://localhost:8083"),
-            os_service_url=resolve_url("OS_SERVICE_URL", "os_service", "http://localhost:8085"),
+            os_service_url=resolve_url("OS_SERVICE_URL", "cloud_os_service", "http://localhost:8085"),
 
             # isA_User Services
             auth_service_url=resolve_url("AUTH_SERVICE_URL", "auth_service", "http://localhost:8201"),

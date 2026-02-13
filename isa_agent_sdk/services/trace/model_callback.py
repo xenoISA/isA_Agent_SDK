@@ -194,23 +194,14 @@ def trace_model_call(node_name: str):
         async def call_model(self, messages, tools=None, ...):
             ...
     """
-    print(f"🔧 [DECORATOR_INIT] trace_model_call decorator initialized for node={node_name}", flush=True)
+    logger.debug(f"trace_model_call_decorator_init | node={node_name}")
     def decorator(func):
-        print(f"🔧 [DECORATOR_APPLIED] Applying trace_model_call to func={func.__name__}", flush=True)
+        logger.debug(f"trace_model_call_decorator_applied | node={node_name} | func={func.__name__}")
         @wraps(func)
         async def wrapper(self, messages, tools=None, model=None, provider=None,
                          stream_tokens=True, output_format=None, *args, **kwargs):
 
-            # DEBUG: Write directly to file to bypass any logging issues
-            try:
-                with open('/tmp/trace_decorator_direct.log', 'a') as f:
-                    f.write(f"[WRAPPER_EXEC] node={node_name}, func={func.__name__}, time={time.time()}\n")
-                    f.flush()
-            except:
-                pass
-
-            # DEBUG: Confirm decorator is being called
-            logger.info(f"🔍 [TRACE_DECORATOR_CALLED] node={node_name}, func={func.__name__}")
+            logger.debug(f"trace_decorator_called | node={node_name} | func={func.__name__}")
 
             # 生成 span_id
             span_id = str(uuid.uuid4())

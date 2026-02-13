@@ -13,6 +13,7 @@ from enum import Enum
 
 if TYPE_CHECKING:
     from pydantic import BaseModel
+    from ._tools import SDKMCPServer
 
 
 class ExecutionEnv(str, Enum):
@@ -453,8 +454,30 @@ class ISAAgentOptions:
         )
     """
 
-    mcp_servers: Optional[Dict[str, Union[MCPServerConfig, Dict]]] = None
-    """External MCP servers to connect to"""
+    mcp_servers: Optional[Dict[str, Union[MCPServerConfig, "SDKMCPServer", Dict]]] = None
+    """
+    MCP servers to connect to.
+
+    Supports three types:
+    1. MCPServerConfig: External MCP servers (subprocess)
+    2. SDKMCPServer: In-process SDK servers (from @tool decorator)
+    3. Dict: Will be converted to MCPServerConfig
+
+    Example:
+        from isa_agent_sdk import tool, create_sdk_mcp_server
+
+        @tool("greet", "Greet someone")
+        async def greet(name: str) -> str:
+            return f"Hello, {name}!"
+
+        options = ISAAgentOptions(
+            mcp_servers={
+                "project": create_sdk_mcp_server("project", [greet]),
+                "external": {"command": "npx", "args": ["@some/mcp-server"]}
+            },
+            allowed_tools=["mcp__project__greet"]
+        )
+    """
 
     hooks: Optional[Dict[str, List[HookMatcher]]] = None
     """Lifecycle hooks: PreToolUse, PostToolUse, etc."""
@@ -487,6 +510,31 @@ class ISAAgentOptions:
 
     setting_sources: Optional[List[str]] = None
     """Config sources: ["project"] for .isa/ style config"""
+
+    project_context: Optional[str] = None
+    """
+    Project context file path or content (Claude SDK CLAUDE.md compatible).
+
+    Supports:
+    - File path: "ISA.md", "CLAUDE.md", ".isa/CONTEXT.md"
+    - Direct content: Multi-line string with project context
+    - "auto": Auto-discover from project root (checks ISA.md, CLAUDE.md, .isa/CONTEXT.md)
+
+    The content is injected into the system prompt as persistent project memory.
+
+    Example:
+        # Auto-discover project context file
+        options = ISAAgentOptions(project_context="auto")
+
+        # Use specific file
+        options = ISAAgentOptions(project_context="./ISA.md")
+
+        # Direct content
+        options = ISAAgentOptions(project_context='''
+            This project uses FastAPI and PostgreSQL.
+            Always use type hints and follow PEP 8.
+        ''')
+    """
 
     # === isA Service Configuration ===
     isa_mcp_url: Optional[str] = None
@@ -583,11 +631,16 @@ class ISAAgentOptions:
         if isinstance(self.guardrail_mode, str):
             self.guardrail_mode = GuardrailMode(self.guardrail_mode)
 
-        # Convert MCP server dicts to MCPServerConfig
+        # Convert MCP server dicts to MCPServerConfig (preserve SDKMCPServer as-is)
         if self.mcp_servers:
+            # Import here to avoid circular imports
+            from ._tools import SDKMCPServer
             normalized = {}
             for name, config in self.mcp_servers.items():
-                if isinstance(config, dict):
+                if isinstance(config, SDKMCPServer):
+                    # SDK servers pass through unchanged
+                    normalized[name] = config
+                elif isinstance(config, dict):
                     normalized[name] = MCPServerConfig(**config)
                 else:
                     normalized[name] = config

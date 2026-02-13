@@ -201,7 +201,8 @@ class MemoryAggregator:
                 "user_id": user_id,
                 "query": query,
                 "memory_types": memory_types,
-                "top_k": 8
+                "limit": 10,
+                "similarity_threshold": 0.15
             })
             
             # Parse the MCP response
@@ -242,32 +243,41 @@ class MemoryAggregator:
             return None
     
     def _parse_mcp_response(self, raw_response) -> dict:
-        """Parse MCP response (handles both event stream, direct JSON, and dict)"""
+        """Parse MCP response (handles MCPClient dict, event stream, and direct JSON)"""
         try:
-            # If already a dict, return it directly
+            # Handle MCPClient response format: {'result': {'data': '...'}, 'context': ...}
             if isinstance(raw_response, dict):
+                # Check for MCPClient wrapped response
+                if 'result' in raw_response and isinstance(raw_response.get('result'), dict):
+                    result_data = raw_response['result'].get('data')
+                    if isinstance(result_data, str):
+                        # Parse the inner JSON string
+                        try:
+                            return json.loads(result_data)
+                        except json.JSONDecodeError:
+                            pass
+                    elif isinstance(result_data, dict):
+                        return result_data
+                # If it has status/data directly, return as-is
+                if 'status' in raw_response or 'data' in raw_response:
+                    return raw_response
                 return raw_response
 
-            # Check for event stream format first (must be string)
+            # Check for event stream format (must be string)
             if isinstance(raw_response, str) and 'event: message' in raw_response and 'data:' in raw_response:
-                # Extract the JSON part after 'data:'
                 lines = raw_response.split('\n')
                 for line in lines:
                     if line.startswith('data:'):
-                        json_str = line[5:].strip()  # Remove 'data:' prefix
+                        json_str = line[5:].strip()
                         data = json.loads(json_str)
-
-                        # Extract the actual content from MCP response
                         if 'result' in data and 'content' in data['result']:
                             content = data['result']['content'][0]['text']
-                            # Parse the inner JSON content
                             return json.loads(content)
 
             # Fallback: try to parse as direct JSON string
             if isinstance(raw_response, str):
                 return json.loads(raw_response)
 
-            # If not string or dict, return error
             return {"status": "error", "error": f"Unexpected response type: {type(raw_response).__name__}"}
 
         except Exception as e:

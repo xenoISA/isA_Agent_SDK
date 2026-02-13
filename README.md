@@ -9,9 +9,11 @@ A complete AI Agent SDK for building intelligent agents with advanced features. 
 - **Built-in Tools** - Read, Write, Edit, Bash, WebSearch, etc.
 - **MCP Integration** - Model Context Protocol support
 - **Human-in-the-Loop** - Durable execution with checkpoints
-- **Skills System** - Prompt injection and customization
+- **Skills System** - Local-first skill loading with MCP fallback
+- **Project Config** - `.isa` directory for project-specific settings
 - **Event Triggers** - Proactive agent activation
 - **Multiple Execution Modes** - Reactive, Collaborative, Proactive
+- **A2A Ready** - Agent Card + JSON-RPC client/server adapters
 
 ## Installation
 
@@ -21,6 +23,27 @@ pip install isa-agent-sdk
 # With FastAPI server support
 pip install isa-agent-sdk[server]
 ```
+
+## Project Setup
+
+Initialize a `.isa` directory for project-specific configuration:
+
+```bash
+mkdir -p .isa/skills
+```
+
+```
+my-project/
+├── .isa/
+│   ├── config.json          # Project configuration
+│   ├── settings.local.json  # MCP servers, permissions
+│   └── skills/              # Local skills (loaded first)
+│       └── my-skill/
+│           └── SKILL.md
+└── ...
+```
+
+Skills in `.isa/skills/` are loaded before MCP, allowing project-specific overrides.
 
 ## Quick Start
 
@@ -106,6 +129,52 @@ async def agent_query(prompt: str):
         if msg.is_text:
             responses.append(msg.content)
     return {"response": "".join(responses)}
+```
+
+### A2A (Agent-to-Agent) Integration
+
+```python
+from fastapi import FastAPI
+from isa_agent_sdk import (
+    A2AAgentCard,
+    A2AClient,
+    A2AServerAdapter,
+    register_a2a_fastapi_routes,
+    build_auth_service_token_validator,
+)
+
+# Build agent card
+card = A2AAgentCard(
+    name="isA Agent",
+    url="https://agent.example.com/a2a",
+    token_url="https://auth.example.com/oauth/token",
+).to_dict()
+
+# Client call to remote A2A agent
+client = A2AClient("https://remote-agent.example.com")
+response = await client.send_message("https://remote-agent.example.com/a2a", "Hello from isA")
+
+# Server adapter maps A2A JSON-RPC -> isa_agent_sdk ask/query
+adapter = A2AServerAdapter()
+rpc_result = await adapter.handle_rpc({
+    "jsonrpc": "2.0",
+    "id": "1",
+    "method": "message/send",
+    "params": {"message": {"parts": [{"text": "Summarize this repo"}]}}
+})
+
+# Mount A2A endpoints in FastAPI
+app = FastAPI()
+register_a2a_fastapi_routes(
+    app,
+    adapter=adapter,
+    agent_card=card,
+    rpc_path="/a2a",
+    auth_validator=build_auth_service_token_validator(
+        "http://localhost:8201",
+        required_scopes=["a2a.invoke"],
+    ),
+)
 ```
 
 ## Execution Modes

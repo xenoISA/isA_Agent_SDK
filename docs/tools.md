@@ -128,6 +128,139 @@ if result.is_tool_result:
         print(f"Result: {result.tool_result_value}")
 ```
 
+## Custom Project Tools (@tool decorator)
+
+Define custom tools directly in your Python code using the `@tool` decorator. These tools execute in-process without needing to add them to the central MCP server.
+
+### Basic Usage
+
+```python
+from isa_agent_sdk import tool, create_sdk_mcp_server, query, ISAAgentOptions
+
+# Define custom tools with @tool decorator
+@tool("greet", "Greet a user by name")
+async def greet_user(name: str) -> str:
+    return f"Hello, {name}!"
+
+@tool("calculate", "Evaluate a math expression")
+def calculate(expression: str) -> dict:
+    result = eval(expression)  # Use safe eval in production
+    return {"expression": expression, "result": result}
+
+# Create SDK MCP server with your tools
+server = create_sdk_mcp_server("mytools", [greet_user, calculate])
+
+# Use in query
+async for msg in query(
+    "Greet Alice and then calculate 15 * 7",
+    options=ISAAgentOptions(
+        mcp_servers={"mytools": server},
+        allowed_tools=["mcp__mytools__greet", "mcp__mytools__calculate"]
+    )
+):
+    if msg.is_tool_use:
+        print(f"[Tool] {msg.tool_name}")
+    elif msg.is_text:
+        print(msg.content, end="")
+```
+
+### @tool Decorator Options
+
+```python
+from isa_agent_sdk import tool
+
+# Basic - schema inferred from type hints
+@tool("my_tool", "Description of what it does")
+async def my_tool(param1: str, param2: int = 10) -> str:
+    ...
+
+# With custom JSON schema
+@tool("complex_tool", "Handle complex input", schema={
+    "type": "object",
+    "properties": {
+        "items": {"type": "array", "items": {"type": "string"}},
+        "config": {"type": "object"}
+    },
+    "required": ["items"]
+})
+async def complex_tool(items: list, config: dict = None) -> dict:
+    ...
+```
+
+### Return Values
+
+Tools can return various types:
+
+```python
+@tool("string_tool", "Returns a string")
+def string_tool() -> str:
+    return "Simple text result"
+
+@tool("dict_tool", "Returns JSON")
+def dict_tool() -> dict:
+    return {"key": "value", "list": [1, 2, 3]}  # Auto-serialized to JSON
+
+@tool("mcp_format_tool", "Returns MCP format directly")
+def mcp_format_tool() -> dict:
+    return {"content": [{"type": "text", "text": "Direct MCP format"}]}
+```
+
+### Error Handling
+
+Errors are automatically captured and returned in MCP format:
+
+```python
+@tool("may_fail", "A tool that might fail")
+async def may_fail(path: str) -> str:
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"File not found: {path}")
+    return open(path).read()
+
+# Error is captured as:
+# {"isError": True, "content": [{"type": "text", "text": "Error: File not found: /missing"}]}
+```
+
+### Mixed Servers (SDK + External)
+
+Combine in-process SDK tools with external MCP servers:
+
+```python
+from isa_agent_sdk import tool, create_sdk_mcp_server, ISAAgentOptions, MCPServerConfig
+
+@tool("local_process", "Process data locally")
+async def local_process(data: str) -> str:
+    return data.upper()
+
+options = ISAAgentOptions(
+    mcp_servers={
+        # In-process SDK server (fast, no IPC)
+        "local": create_sdk_mcp_server("local", [local_process]),
+
+        # External MCP server (subprocess)
+        "github": MCPServerConfig(
+            command="npx",
+            args=["-y", "@modelcontextprotocol/server-github"]
+        )
+    },
+    allowed_tools=[
+        "mcp__local__local_process",  # SDK tool
+        "mcp__github__search_code"     # External tool
+    ]
+)
+```
+
+### Benefits of SDK Tools
+
+| Aspect | SDK Tools (@tool) | External MCP |
+|--------|------------------|--------------|
+| Performance | Fast (in-process) | IPC overhead |
+| Debugging | Easy (Python stack) | Harder |
+| Deployment | Single process | Multiple processes |
+| Type Safety | Python type hints | JSON schema |
+| State Sharing | Direct access | Serialization needed |
+
+---
+
 ## MCP Server Configuration
 
 ### Built-in MCP Server

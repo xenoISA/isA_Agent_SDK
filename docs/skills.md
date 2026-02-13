@@ -9,6 +9,122 @@ Skills provide:
 - **Domain knowledge** - Best practices, patterns, methodologies
 - **Consistent behavior** - Reliable, repeatable approaches
 
+## Project Setup
+
+### The `.isa` Directory
+
+The isA Agent SDK uses a `.isa` directory for agent-specific configuration and skills, similar to how Claude Code uses `.claude`.
+
+```
+my-project/
+├── .isa/
+│   ├── config.json          # Project configuration
+│   ├── settings.local.json  # MCP servers, permissions
+│   └── skills/              # Agent-specific skills
+│       ├── my-skill/
+│       │   └── SKILL.md
+│       └── another-skill/
+│           └── SKILL.md
+├── src/
+└── ...
+```
+
+### Configuration Files
+
+**`.isa/config.json`** - Project configuration:
+```json
+{
+  "project": {
+    "name": "my-project",
+    "type": "agent",
+    "framework": "isA-Agent-SDK",
+    "version": "0.1.0"
+  },
+  "skills": {
+    "directory": "skills",
+    "enabled": true
+  },
+  "agent": {
+    "name": "My Agent",
+    "model": "claude-opus-4-5-20251101"
+  }
+}
+```
+
+**`.isa/settings.local.json`** - MCP servers and permissions:
+```json
+{
+  "permissions": {
+    "allow": [],
+    "deny": [],
+    "ask": []
+  },
+  "mcpServers": {
+    "isa_mcp": {
+      "type": "http",
+      "url": "http://localhost:8081/mcp/"
+    }
+  }
+}
+```
+
+### Environment Configuration
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `ISA_SKILLS_DIR` | `.isa` | Directory name for skills (e.g., `.isa`, `.claude`) |
+
+Example: Use `.claude` directory instead of `.isa`:
+```bash
+export ISA_SKILLS_DIR=.claude
+```
+
+## Skill Loading
+
+### Local-First Strategy
+
+Skills are loaded with a **local-first** strategy:
+
+1. **Local skills** - Check `.isa/skills/{name}/SKILL.md`
+2. **MCP fallback** - If not found locally, fetch from `vibe://skill/{name}`
+
+This allows:
+- **Agent-specific skills** - Customize skills per project
+- **Shared skills** - Fall back to centralized MCP skills
+- **Overrides** - Local skills take precedence over MCP
+
+### Skill File Structure
+
+Each skill is a directory with a `SKILL.md` file:
+
+```
+.isa/skills/my-skill/
+├── SKILL.md           # Main skill content (required)
+├── guides/            # Optional detailed guides
+│   └── usage.md
+└── templates/         # Optional templates
+    └── example.py
+```
+
+**SKILL.md format:**
+```markdown
+---
+name: my-skill
+description: Brief description of what this skill does
+---
+
+# My Skill
+
+## Purpose
+Describe the skill's purpose and when to use it.
+
+## Workflow
+Step-by-step instructions for the agent.
+
+## Examples
+Show example usage and expected outputs.
+```
+
 ## Using Skills
 
 ### Activate Skills via Options
@@ -259,7 +375,50 @@ manager.register_skill(security_skill)
 options = ISAAgentOptions(skills=["security-audit"])
 ```
 
-### Load Skills from Files
+### Load Skills from Local `.isa` Directory
+
+Skills placed in `.isa/skills/` are automatically discovered:
+
+```
+.isa/skills/
+├── api-design/
+│   └── SKILL.md
+└── security-audit/
+    └── SKILL.md
+```
+
+**`.isa/skills/api-design/SKILL.md`:**
+```markdown
+---
+name: api-design
+description: REST API design expert
+---
+
+# API Design Expert
+
+You are an API design expert following:
+- RESTful principles
+- OpenAPI specification
+- Versioning best practices
+- Error handling standards
+- Rate limiting patterns
+
+## Workflow
+1. Analyze the API requirements
+2. Design resource endpoints
+3. Define request/response schemas
+4. Document with OpenAPI spec
+```
+
+Use the skill:
+```python
+options = ISAAgentOptions(skills=["api-design"])
+
+async for msg in query("Design an API for user management", options=options):
+    print(msg.content, end="" if msg.is_text else "\n")
+```
+
+### Load Skills from YAML Files
 
 ```yaml
 # skills/api-design.yaml
@@ -323,6 +482,45 @@ print(f"Auto-triggered: {triggered}")  # ['code-review', 'debug']
 | `documentation` | documentation | Technical writing |
 | `security` | (custom) | Security audits |
 | `architecture` | (custom) | System design |
+
+## Skill Loading Priority
+
+When a skill is requested, the SDK loads it using this priority:
+
+```
+1. Local: .isa/skills/{name}/SKILL.md
+   ↓ (if not found)
+2. MCP: vibe://skill/{name}
+   ↓ (if not found)
+3. Built-in: BUILTIN_SKILLS dict
+```
+
+### Logging
+
+Skill loading is logged for debugging:
+
+```
+[PHASE:CONTEXT] skill_loaded_local | skill=cdd | path=/project/.isa/skills/cdd/SKILL.md | length=3996
+[PHASE:CONTEXT] skill_loaded_mcp | skill=external-skill | length=2500
+[PHASE:CONTEXT] skills_loaded | requested=2 | loaded=2 | local=1 | mcp=1 | duration_ms=45
+```
+
+### Override MCP Skills Locally
+
+To customize a shared MCP skill for your project:
+
+1. Create the skill directory:
+   ```bash
+   mkdir -p .isa/skills/cdd
+   ```
+
+2. Copy or create your custom `SKILL.md`:
+   ```bash
+   # Your custom version takes precedence
+   echo "# Custom CDD Skill" > .isa/skills/cdd/SKILL.md
+   ```
+
+3. The local version will be used instead of MCP.
 
 ## Next Steps
 

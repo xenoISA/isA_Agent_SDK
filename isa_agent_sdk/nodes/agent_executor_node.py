@@ -10,7 +10,7 @@ Advanced task execution node using LangGraph patterns:
 - BaseNode inheritance with modern streaming
 """
 
-from typing import Dict, List, Any
+from typing import Dict, List, Any, Optional
 from langchain_core.messages import SystemMessage, HumanMessage
 from langchain_core.runnables import RunnableConfig
 
@@ -79,11 +79,16 @@ class AgentExecutorNode(BaseNode):
         # Get remaining steps for LangGraph loop control (official pattern)
         remaining_steps = state["remaining_steps"]
         
-        # Extract task execution state first
+        # Check for DAG-aware execution
+        task_dag_dict = state.get("task_dag")
+        if task_dag_dict:
+            return await self._execute_dag(state, config, task_dag_dict)
+
+        # Extract task execution state first (flat-list path)
         task_list = self._get_task_list(state)
         current_index = state.get("current_task_index") or 0  # Handle None case
         execution_mode = state.get("execution_mode") or "sequential"  # sequential or parallel
-        
+
         # Stream execution start
         self.stream_custom({
             "agent_execution": {
@@ -1109,11 +1114,212 @@ Your choice:"""
             resource_requirements_confidence = predictions.get('resource_requirements', {}).get('confidence', 0.0)
             execution_patterns_confidence = predictions.get('execution_patterns', {}).get('confidence', 0.0)
             user_patterns_confidence = predictions.get('user_patterns', {}).get('confidence', 0.0)
-            
+
             max_confidence = max(user_needs_confidence, task_outcomes_confidence, resource_requirements_confidence, execution_patterns_confidence, user_patterns_confidence)
             return max_confidence > 0.7
         except:
             return False
+
+    # =============================================================================
+    # DAG-AWARE WAVEFRONT EXECUTION
+    # =============================================================================
+
+    async def _execute_dag(
+        self,
+        state: AgentState,
+        config: RunnableConfig,
+        task_dag_dict: Dict[str, Any],
+    ) -> AgentState:
+        """DAG-aware wavefront execution.
+
+        Runs all tasks whose dependencies are met in parallel, then loops
+        back for the next wavefront until the DAG is complete or deadlocked.
+        """
+        import asyncio
+        from isa_agent_sdk.dag import DAGScheduler, DAGState, DAGTaskStatus
+
+        dag = DAGState.from_dict(task_dag_dict)
+
+        # Check remaining steps for recursion safety
+        remaining_steps = state["remaining_steps"]
+        if remaining_steps <= 2:
+            return self._handle_recursion_limit_reached(
+                state, dag.completed_count, len(dag.tasks)
+            )
+
+        # Determine which tasks are ready
+        ready_ids = DAGScheduler.get_ready_tasks(dag)
+
+        if not ready_ids:
+            if DAGScheduler.is_dag_complete(dag):
+                return self._handle_dag_completed(state, dag)
+            else:
+                return self._handle_dag_deadlocked(state, dag)
+
+        ready_tasks = [dag.tasks[tid] for tid in ready_ids]
+
+        # Mark as RUNNING
+        for tid in ready_ids:
+            dag.tasks[tid].status = DAGTaskStatus.RUNNING
+
+        # Stream wavefront start
+        self.stream_custom({
+            "dag_wavefront": {
+                "status": "executing",
+                "wavefront_tasks": [t.title for t in ready_tasks],
+                "total_tasks": len(dag.tasks),
+                "completed": dag.completed_count,
+            }
+        })
+
+        # Execute ready tasks in parallel
+        coroutines = [
+            self._execute_single_task(
+                task.to_task_dict(),
+                i + 1,
+                len(dag.tasks),
+                config,
+            )
+            for i, task in enumerate(ready_tasks)
+        ]
+
+        results = await asyncio.gather(*coroutines, return_exceptions=True)
+
+        # Process results and update DAG state
+        messages = []
+        for task, result in zip(ready_tasks, results):
+            if isinstance(result, Exception):
+                dag = DAGScheduler.mark_task_failed(dag, task.task_id, str(result))
+                messages.append(
+                    SystemMessage(
+                        content=f"[DAG_TASK_FAILED] {task.title}: {result}"
+                    )
+                )
+                self.stream_custom({
+                    "dag_task_status": {
+                        "task_id": task.task_id,
+                        "title": task.title,
+                        "status": "failed",
+                        "error": str(result),
+                    }
+                })
+            else:
+                dag = DAGScheduler.mark_task_completed(dag, task.task_id, str(result))
+                messages.append(
+                    SystemMessage(
+                        content=f"[DAG_TASK_RESULT] {task.title}: {result}"
+                    )
+                )
+                self.stream_custom({
+                    "dag_task_status": {
+                        "task_id": task.task_id,
+                        "title": task.title,
+                        "status": "completed",
+                    }
+                })
+
+        # Stream progress
+        self.stream_custom({
+            "dag_progress": {
+                "completed": dag.completed_count,
+                "failed": dag.failed_count,
+                "skipped": dag.skipped_count,
+                "total": len(dag.tasks),
+            }
+        })
+
+        # Determine next action
+        if DAGScheduler.is_dag_complete(dag):
+            next_action = "call_model"
+            self.stream_custom({
+                "dag_complete": {
+                    "completed": dag.completed_count,
+                    "failed": dag.failed_count,
+                    "skipped": dag.skipped_count,
+                    "total": len(dag.tasks),
+                }
+            })
+        else:
+            next_action = "agent_executor"
+
+        return {
+            "messages": messages,
+            "task_dag": dag.to_dict(),
+            "completed_task_count": dag.completed_count,
+            "failed_task_count": dag.failed_count,
+            "next_action": next_action,
+        }
+
+    def _handle_dag_completed(self, state: AgentState, dag) -> AgentState:
+        """Summary message when entire DAG finishes."""
+        total = len(dag.tasks)
+
+        self.stream_custom({
+            "dag_complete": {
+                "completed": dag.completed_count,
+                "failed": dag.failed_count,
+                "skipped": dag.skipped_count,
+                "total": total,
+            }
+        })
+
+        success_rate = (dag.completed_count / total * 100) if total else 0
+
+        summary = (
+            f"**DAG Execution Complete**\n\n"
+            f"**Summary:**\n"
+            f"- Total Tasks: {total}\n"
+            f"- Completed: {dag.completed_count}\n"
+            f"- Failed: {dag.failed_count}\n"
+            f"- Skipped: {dag.skipped_count}\n"
+            f"- Success Rate: {success_rate:.1f}%\n\n"
+            f"ReasonNode will evaluate results and determine next steps."
+        )
+
+        return {
+            "messages": [SystemMessage(content=f"[AGENT_EXECUTOR] {summary}")],
+            "task_dag": dag.to_dict(),
+            "completed_task_count": dag.completed_count,
+            "failed_task_count": dag.failed_count,
+            "next_action": "call_model",
+        }
+
+    def _handle_dag_deadlocked(self, state: AgentState, dag) -> AgentState:
+        """Handle case where remaining tasks are all blocked by failures."""
+        pending_tasks = [
+            t for t in dag.tasks.values()
+            if t.status in ("pending", "ready", "running")
+        ]
+        blocked_titles = [t.title for t in pending_tasks]
+
+        self.stream_custom({
+            "dag_progress": {
+                "status": "deadlocked",
+                "blocked_tasks": blocked_titles,
+                "completed": dag.completed_count,
+                "failed": dag.failed_count,
+                "skipped": dag.skipped_count,
+                "total": len(dag.tasks),
+            }
+        })
+
+        summary = (
+            f"**DAG Execution Deadlocked**\n\n"
+            f"No tasks can proceed. All remaining tasks are blocked by failed dependencies.\n\n"
+            f"**Blocked tasks:** {', '.join(blocked_titles)}\n"
+            f"- Completed: {dag.completed_count}\n"
+            f"- Failed: {dag.failed_count}\n"
+            f"- Skipped: {dag.skipped_count}\n\n"
+            f"ReasonNode will evaluate and decide on recovery."
+        )
+
+        return {
+            "messages": [SystemMessage(content=f"[AGENT_EXECUTOR] {summary}")],
+            "task_dag": dag.to_dict(),
+            "completed_task_count": dag.completed_count,
+            "failed_task_count": dag.failed_count,
+            "next_action": "call_model",
+        }
 
 
 # Factory function for compatibility

@@ -347,6 +347,37 @@ class QueryExecutor:
                 mcp_url=options.isa_mcp_url  # Allow custom MCP URL from options
             )
 
+            # Add SDK tool definitions to available_tools
+            # This ensures LLM knows about @tool decorated functions
+            if options.mcp_servers:
+                from ._tools import SDKMCPServer
+                sdk_tools_added = []
+                available_tools = runtime_context.get('available_tools', [])
+
+                for server_name, server in options.mcp_servers.items():
+                    if isinstance(server, SDKMCPServer):
+                        # Get tool definitions from SDK server
+                        for tool_def in server.list_tools():
+                            # Create full tool name with MCP prefix
+                            full_tool_name = f"mcp__{server_name}__{tool_def['name']}"
+                            # Add to available tools with full name
+                            tool_entry = {
+                                "name": full_tool_name,
+                                "description": tool_def.get('description', ''),
+                                "inputSchema": tool_def.get('inputSchema', {})
+                            }
+                            available_tools.append(tool_entry)
+                            sdk_tools_added.append(full_tool_name)
+
+                runtime_context['available_tools'] = available_tools
+
+                if sdk_tools_added:
+                    logger.info(
+                        f"[SDK] SDK tools added to available_tools | "
+                        f"session_id={session_id} | "
+                        f"sdk_tools={sdk_tools_added}"
+                    )
+
             context_duration = int((time.time() - context_start) * 1000)
             logger.info(
                 f"[SDK] Context prepared | "
@@ -429,6 +460,38 @@ class QueryExecutor:
                     f"is_replacement={system_prompt_config.is_replacement}"
                 )
 
+            # Load project context (ISA.md/CLAUDE.md support)
+            if options.project_context:
+                from .utils.project_context import load_project_context, format_project_context_for_prompt
+                project_content = load_project_context(
+                    source=options.project_context,
+                    start_dir=options.cwd
+                )
+                if project_content:
+                    runtime_config["configurable"]["project_context"] = project_content
+                    logger.info(
+                        f"[SDK] Project context loaded | "
+                        f"session_id={session_id} | "
+                        f"source={options.project_context[:50] if len(options.project_context) > 50 else options.project_context} | "
+                        f"content_length={len(project_content)}"
+                    )
+
+            # Add SDK MCP servers (project-based @tool decorator) to config
+            if options.mcp_servers:
+                from ._tools import SDKMCPServer
+                sdk_servers = {
+                    name: server
+                    for name, server in options.mcp_servers.items()
+                    if isinstance(server, SDKMCPServer)
+                }
+                if sdk_servers:
+                    runtime_config["configurable"]["sdk_mcp_servers"] = sdk_servers
+                    logger.info(
+                        f"[SDK] SDK MCP servers configured | "
+                        f"session_id={session_id} | "
+                        f"servers={list(sdk_servers.keys())}"
+                    )
+
             # Initialize graph async components (e.g., EventTriggerManager)
             # This is required for event triggers to work properly
             if self._graph_builder and hasattr(self._graph_builder, 'initialize'):
@@ -441,6 +504,7 @@ class QueryExecutor:
             # Stream graph execution using StreamProcessor (same as chat_service.py)
             # This properly captures custom stream events from stream_custom()
             from .services.utils.stream_processor import StreamProcessor
+            from .graphs.utils.context_update import update_context_after_chat
 
             logger.info(f"[SDK] Starting graph stream via StreamProcessor | session_id={session_id}")
             stream_start = time.time()
@@ -452,6 +516,9 @@ class QueryExecutor:
                 'tool_result': 0,
                 'complete': 0
             }
+
+            # Track response content for memory storage
+            response_content_parts = []
 
             stream_processor = StreamProcessor(logger=logger)
 
@@ -481,12 +548,18 @@ class QueryExecutor:
                         event_counts['thinking'] += 1
                     elif msg.is_text:
                         event_counts['token'] += 1
+                        # Collect text content for memory storage
+                        if msg.content:
+                            response_content_parts.append(msg.content)
                     elif msg.is_tool_use:
                         event_counts['tool_use'] += 1
                     elif msg.is_tool_result:
                         event_counts['tool_result'] += 1
                     elif msg.is_complete:
                         event_counts['complete'] += 1
+                        # Complete message often contains final response
+                        if msg.content:
+                            response_content_parts.append(msg.content)
 
                     yield msg
 
@@ -498,6 +571,49 @@ class QueryExecutor:
                 f"events={event_counts} | "
                 f"duration_ms={stream_duration}"
             )
+
+            # Store memories after conversation (same as chat_service.py)
+            # This enables cross-session memory recall
+            if response_content_parts and user_id:
+                try:
+                    from .clients.mcp_client import MCPClient
+                    from .core.config import settings
+                    from langchain_core.messages import HumanMessage, AIMessage
+
+                    ai_response = "".join(response_content_parts)
+                    mcp_url = options.isa_mcp_url or settings.resolved_mcp_server_url
+
+                    # Create proper LangChain message objects for extraction
+                    messages = [
+                        HumanMessage(content=prompt),
+                        AIMessage(content=ai_response)
+                    ]
+
+                    # Create MCP client for memory storage
+                    mcp = MCPClient(mcp_url)
+                    await mcp.initialize()
+
+                    try:
+                        memory_result = await update_context_after_chat(
+                            session_id=session_id,
+                            user_id=user_id,
+                            final_state={"messages": messages},
+                            mcp_service=mcp,
+                            conversation_complete=True
+                        )
+
+                        if memory_result.get("memories_stored", 0) > 0:
+                            logger.info(
+                                f"[SDK] Memory stored | "
+                                f"session_id={session_id} | "
+                                f"user_id={user_id} | "
+                                f"memories={memory_result.get('memories_stored', 0)}"
+                            )
+                    finally:
+                        await mcp.close()
+
+                except Exception as mem_err:
+                    logger.warning(f"[SDK] Memory storage failed (non-blocking): {mem_err}")
 
         except ImportError as e:
             logger.error(f"Import error during graph execution: {e}")

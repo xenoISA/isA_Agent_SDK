@@ -458,13 +458,46 @@ class MCPClient:
             return None
 
     # =========================================================================
-    # Security Level Operations (delegated to isa_mcp if available)
+    # Security Level Operations (integrated with isa_mcp SecurityManager)
     # =========================================================================
 
     async def get_tool_security_levels(self, user_id: Optional[str] = None) -> Dict[str, Any]:
-        """Get security levels for all tools"""
-        # TODO: Implement when isa_mcp adds security level support
-        return {"tools": {}, "metadata": {}}
+        """
+        Get security levels for all tools from isa_MCP SecurityPolicy.
+
+        Returns:
+            Dict with tool names mapped to their security levels and metadata
+        """
+        try:
+            # Try to import isa_MCP security module
+            from isa_mcp.core.security import security_policy, SecurityLevel
+
+            tools = await self.get_default_tools()
+            levels = {}
+
+            for tool in tools:
+                tool_name = tool.get("name", "")
+                if tool_name:
+                    # Get security level from policy, default to LOW
+                    level = security_policy.tool_policies.get(tool_name, SecurityLevel.LOW)
+                    levels[tool_name] = {
+                        "security_level": level.name,
+                        "security_level_value": level.value
+                    }
+
+            return {
+                "tools": levels,
+                "metadata": {
+                    "source": "isa_mcp",
+                    "policy_version": "1.0"
+                }
+            }
+        except ImportError:
+            self.logger.debug("isa_mcp security module not available, using defaults")
+            return {"tools": {}, "metadata": {"error": "security module unavailable"}}
+        except Exception as e:
+            self.logger.warning(f"Failed to get tool security levels: {e}")
+            return {"tools": {}, "metadata": {"error": str(e)}}
 
     async def search_tools_by_security_level(
         self,
@@ -473,18 +506,80 @@ class MCPClient:
         user_id: Optional[str] = None,
         max_results: int = 10
     ) -> List[Dict[str, Any]]:
-        """Search for tools by security level"""
-        # TODO: Implement when isa_mcp adds security level support
-        return []
+        """
+        Search for tools matching a specific security level.
+
+        Args:
+            security_level: Security level to filter by (LOW, MEDIUM, HIGH, CRITICAL)
+            query: Optional additional search query
+            user_id: Optional user ID
+            max_results: Maximum results to return
+
+        Returns:
+            List of tools matching the security level
+        """
+        try:
+            from isa_mcp.core.security import security_policy, SecurityLevel
+
+            # Parse requested security level
+            try:
+                requested_level = SecurityLevel[security_level.upper()]
+            except KeyError:
+                self.logger.warning(f"Invalid security level: {security_level}")
+                return []
+
+            tools = await self.get_default_tools()
+            matching_tools = []
+
+            for tool in tools:
+                tool_name = tool.get("name", "")
+                if tool_name:
+                    level = security_policy.tool_policies.get(tool_name, SecurityLevel.LOW)
+                    if level == requested_level:
+                        # If query provided, filter by name/description match
+                        if query:
+                            search_text = f"{tool_name} {tool.get('description', '')}".lower()
+                            if query.lower() not in search_text:
+                                continue
+                        matching_tools.append({
+                            **tool,
+                            "security_level": level.name
+                        })
+
+            return matching_tools[:max_results]
+        except ImportError:
+            self.logger.debug("isa_mcp security module not available")
+            return []
+        except Exception as e:
+            self.logger.warning(f"Failed to search tools by security level: {e}")
+            return []
 
     async def get_tool_security_level(
         self,
         tool_name: str,
         user_id: Optional[str] = None
     ) -> Optional[str]:
-        """Get security level for a specific tool"""
-        # TODO: Implement when isa_mcp adds security level support
-        return None
+        """
+        Get security level for a specific tool.
+
+        Args:
+            tool_name: Name of the tool
+            user_id: Optional user ID
+
+        Returns:
+            Security level string (LOW, MEDIUM, HIGH, CRITICAL) or None
+        """
+        try:
+            from isa_mcp.core.security import security_policy, SecurityLevel
+
+            level = security_policy.tool_policies.get(tool_name, SecurityLevel.LOW)
+            return level.name
+        except ImportError:
+            self.logger.debug("isa_mcp security module not available")
+            return None
+        except Exception as e:
+            self.logger.warning(f"Failed to get tool security level: {e}")
+            return None
 
     async def check_tool_security_authorized(
         self,
@@ -492,9 +587,39 @@ class MCPClient:
         required_level: str,
         user_id: Optional[str] = None
     ) -> bool:
-        """Check if tool meets required security level"""
-        # TODO: Implement when isa_mcp adds security level support
-        return True
+        """
+        Check if a tool meets or exceeds the required security level.
+
+        Args:
+            tool_name: Name of the tool
+            required_level: Required security level (LOW, MEDIUM, HIGH, CRITICAL)
+            user_id: Optional user ID
+
+        Returns:
+            True if tool meets or exceeds required security level
+        """
+        try:
+            from isa_mcp.core.security import security_policy, SecurityLevel
+
+            # Parse required level
+            try:
+                required = SecurityLevel[required_level.upper()]
+            except KeyError:
+                self.logger.warning(f"Invalid security level: {required_level}")
+                return True  # Fail-open on invalid level
+
+            # Get tool's security level
+            tool_level = security_policy.tool_policies.get(tool_name, SecurityLevel.LOW)
+
+            # Tool is authorized if its level value is >= required level value
+            # (lower value = lower security requirement)
+            return tool_level.value >= required.value
+        except ImportError:
+            self.logger.debug("isa_mcp security module not available, allowing access")
+            return True  # Fail-open if security module unavailable
+        except Exception as e:
+            self.logger.warning(f"Security authorization check failed: {e}")
+            return True  # Fail-open on error
 
     # =========================================================================
     # Universal Search

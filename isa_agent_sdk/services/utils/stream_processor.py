@@ -442,6 +442,25 @@ class StreamProcessor:
                 token
             ).to_dict()
 
+        elif isinstance(chunk, dict) and "stream_event" in chunk:
+            # Bridge for StreamEvent-aware nodes: emit standard events into EventEmitter
+            ev = chunk["stream_event"]
+            ev_type = ev.get("type")
+            if ev_type == "token":
+                yield EventEmitter.content_token(session_id, ev.get("content", "")).to_dict()
+            elif ev_type == "reasoning":
+                yield EventEmitter.content_thinking(session_id, ev.get("content", "")).to_dict()
+            elif ev_type == "tool_call":
+                tc = ev.get("tool_call", {})
+                yield EventEmitter.tool_call(session_id, tc.get("name", "unknown"), tc.get("args", {})).to_dict()
+            elif ev_type == "final":
+                msg = ev.get("message")
+                if msg and isinstance(msg, dict) and msg.get("content"):
+                    yield EventEmitter.content_complete(session_id, msg.get("content", ""), "AIMessage").to_dict()
+            else:
+                # Unknown stream_event subtype
+                yield EventEmitter.system_info(session_id, f"Unknown stream_event: {ev_type}").to_dict()
+
         elif isinstance(chunk, dict) and "custom_llm_chunk" in chunk:
             # Fallback for other nodes (legacy compatibility)
             token = chunk["custom_llm_chunk"]

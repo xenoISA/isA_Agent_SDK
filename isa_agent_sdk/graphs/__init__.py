@@ -9,6 +9,9 @@ def __getattr__(name):
     if name == "SmartAgentGraphBuilder":
         from .smart_agent_graph import SmartAgentGraphBuilder
         return SmartAgentGraphBuilder
+    if name == "MultiAgentGraph":
+        from .multi_agent_graph import MultiAgentGraph
+        return MultiAgentGraph
     raise AttributeError(f"module 'isa_agent_sdk.graphs' has no attribute '{name}'")
 
-__all__ = ["SmartAgentGraphBuilder"]
+__all__ = ["SmartAgentGraphBuilder", "MultiAgentGraph"]

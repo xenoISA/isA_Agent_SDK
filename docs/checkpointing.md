@@ -10,6 +10,10 @@ Durable execution provides:
 - **Failure recovery** - Survive process crashes and restarts
 - **Long-running tasks** - Handle tasks that span hours or days
 
+**History vs Checkpoints**
+- Conversation history is persisted via session memory even without checkpoints.
+- Checkpoints are optional and only needed for resumable execution after an interrupt.
+
 ## Checkpointer Backends
 
 | Backend | Use Case | Persistence | Performance |
@@ -90,6 +94,10 @@ options = ISAAgentOptions(
     execution_mode=ExecutionMode.COLLABORATIVE
 )
 ```
+
+**Storage detail (session_service backend):**
+- Checkpoints are stored as session messages with `message_type="checkpoint"`.
+- This keeps checkpoints and conversation history in the same service.
 
 ### Using PostgreSQL Directly
 

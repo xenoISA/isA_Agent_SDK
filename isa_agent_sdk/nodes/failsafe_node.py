@@ -358,7 +358,8 @@ class FailsafeNode(BaseNode):
                 stream_tokens=False
             )
             return str(response.content)
-        except Exception:
+        except (ConnectionError, TimeoutError, RuntimeError, ValueError) as e:
+            self.logger.warning(f"Fallback response generation failed: {e}")
             return f"I'm not entirely certain about the best answer to your question: '{user_query}'. To provide you with the most accurate information, could you provide more specific details or context about what you're trying to accomplish?"
 
     async def _generate_info_request_response(self, user_query: str, config: RunnableConfig) -> str:
@@ -599,7 +600,8 @@ class FailsafeNode(BaseNode):
             
             max_confidence = max(user_needs_confidence, task_outcomes_confidence, response_quality_confidence, user_satisfaction_confidence, potential_issues_confidence, user_patterns_confidence)
             return max_confidence > 0.7
-        except:
+        except (KeyError, TypeError, ValueError) as e:
+            self.logger.debug(f"Could not assess prediction confidence: {e}")
             return False
 
     def _has_unhandled_tool_calls(self, messages) -> bool:

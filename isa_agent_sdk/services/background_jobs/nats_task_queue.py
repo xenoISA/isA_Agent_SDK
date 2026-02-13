@@ -189,7 +189,10 @@ class NATSTaskQueue:
     # ============================================
 
     async def create_worker_consumer(
-        self, worker_name: str, priority_filter: Optional[str] = None
+        self,
+        worker_name: str,
+        priority_filter: Optional[str] = None,
+        delivery_policy: str = "all",
     ):
         """
         Create consumer for a worker
@@ -197,6 +200,7 @@ class NATSTaskQueue:
         Args:
             worker_name: Unique worker name
             priority_filter: Filter by priority ('high', 'normal', 'low') or None for all
+            delivery_policy: JetStream delivery policy ('all', 'new', 'last')
         """
         try:
             # Build filter subject
@@ -210,9 +214,14 @@ class NATSTaskQueue:
                     stream_name=self.STREAM_NAME,
                     consumer_name=worker_name,
                     filter_subject=filter_subject,
+                    delivery_policy=delivery_policy,
                 )
 
-            logger.info(f"Consumer created: {worker_name} | filter={filter_subject}")
+            logger.info(
+                f"Consumer created: {worker_name} | "
+                f"filter={filter_subject} | "
+                f"delivery_policy={delivery_policy}"
+            )
 
         except Exception as e:
             logger.error(f"Failed to create consumer {worker_name}: {e}")

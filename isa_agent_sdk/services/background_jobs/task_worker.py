@@ -33,7 +33,12 @@ logger = setup_logger("isA_Agent.TaskWorker")
 class TaskWorker:
     """Background task worker that processes tasks from NATS queue"""
 
-    def __init__(self, worker_name: str = "worker-1", priority_filter: Optional[str] = None):
+    def __init__(
+        self,
+        worker_name: str = "worker-1",
+        priority_filter: Optional[str] = None,
+        delivery_policy: str = "all",
+    ):
         """
         Initialize task worker
 
@@ -41,13 +46,21 @@ class TaskWorker:
             worker_name: Unique worker name
             priority_filter: Process only specific priority ('high', 'normal', 'low') or None for all
         """
+        import os
+
         self.worker_name = worker_name
         self.priority_filter = priority_filter
+        self.delivery_policy = delivery_policy
+        self.user_id = os.getenv("BACKGROUND_JOBS_USER_ID", "agent-service")
+        self.organization_id = os.getenv("BACKGROUND_JOBS_ORG_ID", "default-org")
         self.running = False
 
         # Initialize components
-        self.task_queue = NATSTaskQueue(user_id=f"agent-worker-{worker_name}")
-        self.state_manager = RedisStateManager(user_id=f"agent-worker-{worker_name}")
+        self.task_queue = NATSTaskQueue(user_id=self.user_id)
+        self.state_manager = RedisStateManager(
+            user_id=self.user_id,
+            organization_id=self.organization_id,
+        )
 
     def start(self):
         """Start worker and begin processing tasks"""
@@ -58,43 +71,55 @@ class TaskWorker:
                 f"priority_filter={self.priority_filter or 'all'}"
             )
 
-            # Connect to NATS and Redis
-            self.task_queue.connect()
-            self.state_manager.connect()
-
-            # Create consumer for this worker
-            self.task_queue.create_worker_consumer(
-                worker_name=self.worker_name,
-                priority_filter=self.priority_filter
-            )
-
             # Set up signal handlers for graceful shutdown
             signal.signal(signal.SIGINT, self._shutdown_handler)
             signal.signal(signal.SIGTERM, self._shutdown_handler)
 
-            self.running = True
-            logger.info(f"✅ Worker {self.worker_name} is ready")
-
-            # Start processing loop
-            self._processing_loop()
+            asyncio.run(self._run())
 
         except Exception as e:
             logger.error(f"Failed to start worker: {e}", exc_info=True)
             raise
 
+    async def _run(self):
+        """Async worker bootstrap + processing loop."""
+        # Connect to NATS and Redis
+        await self.task_queue.connect()
+        await self.state_manager.connect()
+
+        # Create consumer for this worker
+        await self.task_queue.create_worker_consumer(
+            worker_name=self.worker_name,
+            priority_filter=self.priority_filter,
+            delivery_policy=self.delivery_policy,
+        )
+
+        self.running = True
+        logger.info(f"✅ Worker {self.worker_name} is ready")
+
+        # Start processing loop
+        await self._processing_loop()
+
     def stop(self):
         """Stop worker gracefully"""
         logger.info(f"🛑 Stopping worker {self.worker_name}")
         self.running = False
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            asyncio.run(self._async_stop())
+        else:
+            loop.create_task(self._async_stop())
 
-        # Disconnect from services
-        self.task_queue.disconnect()
-        self.state_manager.disconnect()
+    async def _async_stop(self):
+        """Async cleanup for worker resources."""
+        await self.task_queue.disconnect()
+        await self.state_manager.disconnect()
 
         # Close MCP service if initialized
         if hasattr(self, '_mcp_service'):
             try:
-                asyncio.run(self._mcp_service.close())
+                await self._mcp_service.close()
                 logger.info("✅ MCP service closed")
             except Exception as e:
                 logger.warning(f"Failed to close MCP service: {e}")
@@ -107,7 +132,7 @@ class TaskWorker:
         self.stop()
         sys.exit(0)
 
-    def _processing_loop(self):
+    async def _processing_loop(self):
         """Main processing loop - pulls and processes tasks"""
         poll_interval = 1  # Poll every 1 second
         batch_size = 1  # Process one task at a time
@@ -115,14 +140,14 @@ class TaskWorker:
         while self.running:
             try:
                 # Pull tasks from queue
-                messages = self.task_queue.pull_tasks(
+                messages = await self.task_queue.pull_tasks(
                     worker_name=self.worker_name,
                     batch_size=batch_size
                 )
 
                 if not messages:
                     # No tasks available, wait and retry
-                    time.sleep(poll_interval)
+                    await asyncio.sleep(poll_interval)
                     continue
 
                 # Process each task
@@ -132,11 +157,11 @@ class TaskWorker:
 
                     try:
                         # Process the task
-                        self._process_task(message)
+                        await self._process_task(message)
 
                         # Acknowledge task completion
                         sequence = message.get('sequence')
-                        self.task_queue.acknowledge_task(self.worker_name, sequence)
+                        await self.task_queue.acknowledge_task(self.worker_name, sequence)
 
                     except Exception as task_error:
                         logger.error(
@@ -145,13 +170,13 @@ class TaskWorker:
                         )
                         # NACK task for retry (will requeue)
                         sequence = message.get('sequence')
-                        self.task_queue.nack_task(self.worker_name, sequence, delay_seconds=30)
+                        await self.task_queue.nack_task(self.worker_name, sequence, delay_seconds=30)
 
             except Exception as e:
                 logger.error(f"Processing loop error: {e}", exc_info=True)
-                time.sleep(poll_interval)
+                await asyncio.sleep(poll_interval)
 
-    def _process_task(self, message: Dict[str, Any]):
+    async def _process_task(self, message: Dict[str, Any]):
         """
         Process a single task
 
@@ -180,10 +205,10 @@ class TaskWorker:
                 progress_percent=0.0,
                 started_at=datetime.now()
             )
-            self.state_manager.store_task_status(task.job_id, progress)
+            await self.state_manager.store_task_status(task.job_id, progress)
 
             # Publish task start event
-            self.state_manager.publish_progress_event(ProgressEvent(
+            await self.state_manager.publish_progress_event(ProgressEvent(
                 type="task_start",
                 job_id=task.job_id,
                 data={
@@ -194,7 +219,7 @@ class TaskWorker:
 
             # Execute tools
             task_start_time = time.time()
-            results = asyncio.run(self._execute_tools(task, progress))
+            results = await self._execute_tools(task, progress)
             task_end_time = time.time()
 
             # Calculate final statistics
@@ -218,7 +243,7 @@ class TaskWorker:
                 execution_time_seconds=task_end_time - task_start_time
             )
 
-            self.state_manager.store_task_result(task.job_id, final_result)
+            await self.state_manager.store_task_result(task.job_id, final_result)
 
             # Update final status
             progress.status = final_status
@@ -226,10 +251,10 @@ class TaskWorker:
             progress.failed_tools = failed_tools
             progress.progress_percent = 100.0
             progress.completed_at = datetime.now()
-            self.state_manager.store_task_status(task.job_id, progress)
+            await self.state_manager.store_task_status(task.job_id, progress)
 
             # Publish completion event
-            self.state_manager.publish_progress_event(ProgressEvent(
+            await self.state_manager.publish_progress_event(ProgressEvent(
                 type="task_complete",
                 job_id=task.job_id,
                 data={
@@ -242,9 +267,9 @@ class TaskWorker:
 
             # Update counters
             if final_status == TaskStatus.COMPLETED:
-                self.state_manager.increment_task_counter("tasks_completed")
+                await self.state_manager.increment_task_counter("tasks_completed")
             else:
-                self.state_manager.increment_task_counter("tasks_failed")
+                await self.state_manager.increment_task_counter("tasks_failed")
 
             logger.info(
                 f"✅ Task completed | "
@@ -276,7 +301,7 @@ class TaskWorker:
         results = []
 
         for i, tool_info_dict in enumerate(task.tools):
-            tool_info = ToolCallInfo(**tool_info_dict)
+            tool_info = tool_info_dict if isinstance(tool_info_dict, ToolCallInfo) else ToolCallInfo(**tool_info_dict)
             tool_name = tool_info.tool_name
             tool_args = tool_info.tool_args
             tool_call_id = tool_info.tool_call_id
@@ -285,10 +310,10 @@ class TaskWorker:
             progress_percent = int((i / len(task.tools)) * 100)
             progress.current_tool = tool_name
             progress.progress_percent = progress_percent
-            self.state_manager.store_task_status(task.job_id, progress)
+            await self.state_manager.store_task_status(task.job_id, progress)
 
             # Publish tool start event
-            self.state_manager.publish_progress_event(ProgressEvent(
+            await self.state_manager.publish_progress_event(ProgressEvent(
                 type="tool_start",
                 job_id=task.job_id,
                 data={
@@ -329,7 +354,7 @@ class TaskWorker:
                 progress.completed_tools += 1
 
                 # Publish tool complete event
-                self.state_manager.publish_progress_event(ProgressEvent(
+                await self.state_manager.publish_progress_event(ProgressEvent(
                     type="tool_complete",
                     job_id=task.job_id,
                     data={
@@ -362,7 +387,7 @@ class TaskWorker:
                 progress.failed_tools += 1
 
                 # Publish tool error event
-                self.state_manager.publish_progress_event(ProgressEvent(
+                await self.state_manager.publish_progress_event(ProgressEvent(
                     type="tool_error",
                     job_id=task.job_id,
                     data={
@@ -420,24 +445,25 @@ class TaskWorker:
 
     async def _get_mcp_service(self):
         """
-        Get or create MCP service instance with Consul discovery
+        Get or create MCP client instance
 
         Returns:
-            MCP service instance
+            MCP client instance
         """
         # Cache MCP service instance
         if not hasattr(self, '_mcp_service'):
             try:
-                # Import MCP service
-                from isa_agent_sdk.components.mcp_service import MCPService
+                from isa_agent_sdk.clients.mcp_client import MCPClient
+                from isa_agent_sdk.core.config import settings
 
-                # Create MCP service instance with Consul discovery
-                self._mcp_service = MCPService(user_id=f"worker-{self.worker_name}")
-
-                # Initialize service (connect to MCP servers via Consul)
+                mcp_url = settings.resolved_mcp_server_url
+                self._mcp_service = MCPClient(
+                    mcp_url=mcp_url,
+                    user_id=self.user_id,
+                    client_id=f"worker-{self.worker_name}",
+                )
                 await self._mcp_service.initialize()
-
-                logger.info(f"✅ MCP service initialized for worker {self.worker_name}")
+                logger.info(f"✅ MCP client initialized for worker {self.worker_name} | url={mcp_url}")
 
             except Exception as e:
                 logger.error(f"Failed to initialize MCP service: {e}", exc_info=True)
@@ -457,11 +483,18 @@ def main():
         choices=["high", "normal", "low"],
         help="Process only specific priority tasks"
     )
+    parser.add_argument(
+        "--delivery-policy",
+        choices=["all", "new", "last"],
+        default="all",
+        help="JetStream delivery policy for the consumer"
+    )
     args = parser.parse_args()
 
     worker = TaskWorker(
         worker_name=args.name,
-        priority_filter=args.priority
+        priority_filter=args.priority,
+        delivery_policy=args.delivery_policy,
     )
 
     try:

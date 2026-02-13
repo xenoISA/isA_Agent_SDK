@@ -55,6 +55,8 @@ class AgentState(TypedDict):
 
     # Core workflow control
     next_action: Annotated[Optional[str], preserve_latest]
+    next_agent: Annotated[Optional[str], preserve_latest]
+    active_agent: Annotated[Optional[str], preserve_latest]
 
     # LangGraph loop control - official RemainingSteps for recursion management
     remaining_steps: RemainingSteps
@@ -72,6 +74,10 @@ class AgentState(TypedDict):
     # Execution plan from planning tools
     execution_plan: Annotated[Optional[Dict[str, Any]], preserve_latest]
 
+    # Shared state across multi-agent graphs
+    shared_state: Annotated[Optional[Dict[str, Any]], merge_dicts]
+    agent_outputs: Annotated[Optional[Dict[str, Any]], merge_dicts]
+
     # Auto-approve settings (similar to Claude Code's -y flag)
     # When True, plan reviews are auto-approved without HIL interruption
     auto_approve_plans: Annotated[Optional[bool], preserve_latest]
@@ -80,6 +86,9 @@ class AgentState(TypedDict):
     # Autonomous execution flag (set by ToolNode when plan is detected)
     is_autonomous: Annotated[Optional[bool], preserve_latest]
     execution_strategy: Annotated[Optional[str], preserve_latest]  # "autonomous_planning", etc.
+
+    # Task DAG state (optional - when present, enables DAG-aware execution)
+    task_dag: Annotated[Optional[Dict[str, Any]], preserve_latest]
 
 
 class MCPResourcesSchema(TypedDict):
