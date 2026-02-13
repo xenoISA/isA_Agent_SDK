@@ -1119,7 +1119,8 @@ Your choice:"""
 
             max_confidence = max(user_needs_confidence, task_outcomes_confidence, resource_requirements_confidence, execution_patterns_confidence, user_patterns_confidence)
             return max_confidence > 0.7
-        except:
+        except (TypeError, ValueError, AttributeError, KeyError) as e:
+            self.logger.debug(f"Prediction confidence check failed: {e}")
             return False
 
     # =============================================================================

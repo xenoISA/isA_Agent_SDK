@@ -118,6 +118,15 @@ class SwarmOrchestrator:
             shared_state=dict(self._initial_shared_state),
         )
 
+        # Validate active agent before entering the loop
+        if not swarm_state.active_agent:
+            raise ValueError("swarm_state.active_agent must be set")
+        if swarm_state.active_agent not in self._agents:
+            raise KeyError(
+                f"Active agent '{swarm_state.active_agent}' not in swarm. "
+                f"Available: {list(self._agents.keys())}"
+            )
+
         agent_outputs: Dict[str, AgentRunResult] = {}
         all_messages: List[AgentMessage] = []
         current_prompt = prompt
@@ -223,6 +232,15 @@ class SwarmOrchestrator:
             active_agent=self.entry_agent,
             shared_state=dict(self._initial_shared_state),
         )
+
+        # Validate active agent before entering the loop
+        if not swarm_state.active_agent:
+            raise ValueError("swarm_state.active_agent must be set")
+        if swarm_state.active_agent not in self._agents:
+            raise KeyError(
+                f"Active agent '{swarm_state.active_agent}' not in swarm. "
+                f"Available: {list(self._agents.keys())}"
+            )
 
         current_prompt = prompt
 
