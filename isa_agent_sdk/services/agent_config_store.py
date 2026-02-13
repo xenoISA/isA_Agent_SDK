@@ -9,6 +9,7 @@ isa_common.AsyncPostgresClient (native asyncpg).
 from __future__ import annotations
 
 import logging
+import re
 import uuid
 from datetime import datetime
 from enum import Enum
@@ -81,6 +82,9 @@ class AgentConfigStore:
     ):
         infra = settings.infrastructure
         self.schema = schema or settings.resources.postgres.schema or "agent"
+
+        if not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', self.schema):
+            raise ValueError(f"Invalid schema name: {self.schema!r}")
 
         self.db = AsyncPostgresClient(
             host=host or infra.postgres_host,

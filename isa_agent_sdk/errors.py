@@ -50,7 +50,7 @@ class ISASDKError(Exception):
 # Connection & Infrastructure Errors
 # ============================================================================
 
-class ConnectionError(ISASDKError):
+class ISAConnectionError(ISASDKError):
     """
     Failed to connect to a required service.
 
@@ -74,7 +74,7 @@ class ConnectionError(ISASDKError):
         self.details["url"] = url
 
 
-class TimeoutError(ISASDKError):
+class ISATimeoutError(ISASDKError):
     """
     Operation timed out.
 
@@ -337,7 +337,7 @@ class ResumeError(SessionError):
 # Validation Errors
 # ============================================================================
 
-class ValidationError(ISASDKError):
+class ISAValidationError(ISASDKError):
     """
     Input validation failed.
 
@@ -358,7 +358,7 @@ class ValidationError(ISASDKError):
         # Don't include value in details (might be sensitive)
 
 
-class SchemaError(ValidationError):
+class SchemaError(ISAValidationError):
     """
     Schema validation failed.
 
@@ -381,7 +381,7 @@ class SchemaError(ValidationError):
         self.details["errors"] = self.errors
 
 
-class ConfigurationError(ValidationError):
+class ConfigurationError(ISAValidationError):
     """
     Configuration is invalid.
 
@@ -394,7 +394,7 @@ class ConfigurationError(ValidationError):
 # Permission & Authorization Errors
 # ============================================================================
 
-class PermissionError(ISASDKError):
+class ISAPermissionError(ISASDKError):
     """
     Permission denied.
 
@@ -415,7 +415,7 @@ class PermissionError(ISASDKError):
         self.details["resource"] = resource
 
 
-class ToolPermissionError(PermissionError):
+class ToolPermissionError(ISAPermissionError):
     """
     Tool execution not permitted.
 
@@ -432,7 +432,7 @@ class ToolPermissionError(PermissionError):
         self.tool_name = tool_name
 
 
-class HILDeniedError(PermissionError):
+class HILDeniedError(ISAPermissionError):
     """
     Human-in-the-loop request was denied.
 
@@ -453,7 +453,7 @@ class HILDeniedError(PermissionError):
         self.details["session_id"] = session_id
 
 
-class HILTimeoutError(PermissionError):
+class HILTimeoutError(ISAPermissionError):
     """
     Human-in-the-loop request timed out.
 
@@ -496,7 +496,7 @@ class MCPError(ISASDKError):
         self.details["server_name"] = server_name
 
 
-class MCPConnectionError(MCPError, ConnectionError):
+class MCPConnectionError(MCPError, ISAConnectionError):
     """
     Failed to connect to MCP server.
     """
@@ -529,8 +529,8 @@ __all__ = [
     "ISASDKError",
 
     # Connection & Infrastructure
-    "ConnectionError",
-    "TimeoutError",
+    "ISAConnectionError",
+    "ISATimeoutError",
     "CircuitBreakerError",
     "RateLimitError",
 
@@ -549,12 +549,12 @@ __all__ = [
     "ResumeError",
 
     # Validation
-    "ValidationError",
+    "ISAValidationError",
     "SchemaError",
     "ConfigurationError",
 
     # Permission & Authorization
-    "PermissionError",
+    "ISAPermissionError",
     "ToolPermissionError",
     "HILDeniedError",
     "HILTimeoutError",
@@ -563,4 +563,16 @@ __all__ = [
     "MCPError",
     "MCPConnectionError",
     "MCPToolNotFoundError",
+
+    # Backward-compat aliases (deprecated — use ISA-prefixed names)
+    "ConnectionError",
+    "TimeoutError",
+    "ValidationError",
+    "PermissionError",
 ]
+
+# Backward-compat aliases (deprecated — use ISA-prefixed names)
+ConnectionError = ISAConnectionError
+TimeoutError = ISATimeoutError
+ValidationError = ISAValidationError
+PermissionError = ISAPermissionError

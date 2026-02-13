@@ -633,19 +633,21 @@ class AgentExecutorNode(BaseNode):
             # Handle timeout
             timeout_msg = f"⏱️ **Parallel Execution Timeout**\n"
             timeout_msg += f"Batch of {len(parallel_batch)} tasks exceeded {self.task_timeout}s timeout"
-            
+
             # Add timeout message to conversation (add_messages reducer handles appending)
             result_message = SystemMessage(content=f"[PARALLEL_TIMEOUT] {timeout_msg}")
             state["messages"] = [result_message]
-            
+
             # Skip failed batch and continue
             state["current_task_index"] = current_index + len(parallel_batch)
             state["failed_task_count"] = state.get("failed_task_count", 0) + len(parallel_batch)
-            
+
             if state["current_task_index"] >= len(task_list):
                 state["next_action"] = "call_model"
             else:
-                return {"next_action": "agent_executor"}
+                state["next_action"] = "agent_executor"
+
+        return state
     
     async def _execute_single_task(
         self, 
@@ -1286,9 +1288,10 @@ Your choice:"""
 
     def _handle_dag_deadlocked(self, state: AgentState, dag) -> AgentState:
         """Handle case where remaining tasks are all blocked by failures."""
+        from isa_agent_sdk.dag import DAGTaskStatus
         pending_tasks = [
             t for t in dag.tasks.values()
-            if t.status in ("pending", "ready", "running")
+            if t.status in (DAGTaskStatus.PENDING, DAGTaskStatus.READY, DAGTaskStatus.RUNNING)
         ]
         blocked_titles = [t.title for t in pending_tasks]
 
