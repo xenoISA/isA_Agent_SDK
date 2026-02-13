@@ -318,18 +318,27 @@ class Chat:
             AgentResponse with complete response
         """
         try:
-            loop = asyncio.get_running_loop()
+            asyncio.get_running_loop()
+            # Already inside an async context — cannot call run_until_complete.
+            # Wrap with asyncio.run() in a new thread instead.
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                return pool.submit(
+                    asyncio.run,
+                    self._create_async(
+                        message, user_id, session_id, prompt_name, prompt_args,
+                        graph_type, auto_select_graph, output_format,
+                        device_context, media_files, **kwargs
+                    ),
+                ).result()
         except RuntimeError:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-
-        return loop.run_until_complete(
-            self._create_async(
-                message, user_id, session_id, prompt_name, prompt_args,
-                graph_type, auto_select_graph, output_format,
-                device_context, media_files, **kwargs
+            return asyncio.run(
+                self._create_async(
+                    message, user_id, session_id, prompt_name, prompt_args,
+                    graph_type, auto_select_graph, output_format,
+                    device_context, media_files, **kwargs
+                )
             )
-        )
 
     def stream(
         self,
@@ -362,23 +371,32 @@ class Chat:
         Yields:
             AgentEvent objects for each event
         """
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
+        import queue
+        import threading
 
-        gen = self._stream_async(
-            message, user_id, session_id, prompt_name, prompt_args,
-            graph_type, auto_select_graph, device_context, media_files, **kwargs
-        )
+        event_queue: queue.Queue = queue.Queue()
+        _SENTINEL = object()
+
+        async def _consume():
+            try:
+                async for event in self._stream_async(
+                    message, user_id, session_id, prompt_name, prompt_args,
+                    graph_type, auto_select_graph, device_context, media_files, **kwargs
+                ):
+                    event_queue.put(event)
+            finally:
+                event_queue.put(_SENTINEL)
+
+        thread = threading.Thread(target=asyncio.run, args=(_consume(),), daemon=True)
+        thread.start()
 
         while True:
-            try:
-                event = loop.run_until_complete(gen.__anext__())
-                yield event
-            except StopAsyncIteration:
+            item = event_queue.get()
+            if item is _SENTINEL:
                 break
+            yield item
+
+        thread.join()
 
     async def _create_async(
         self,
@@ -703,7 +721,11 @@ class ISAAgent:
             **kwargs: Additional HTTP client configuration
         """
         # Get API key
-        self.api_key = api_key or os.getenv("ISA_API_KEY") or "dev_key_test"
+        self.api_key = api_key or os.getenv("ISA_API_KEY")
+        if not self.api_key:
+            raise ValueError(
+                "API key required: pass api_key or set ISA_API_KEY env var"
+            )
 
         # Get base URL
         self.base_url = (
@@ -733,9 +755,8 @@ class ISAAgent:
 
     def _generate_session_id(self, user_id: str) -> str:
         """Generate session ID"""
-        import time
-        timestamp = int(time.time() * 1000)
-        return f"{user_id}_{timestamp}"
+        import uuid
+        return f"{user_id}_{uuid.uuid4().hex[:12]}"
 
     async def close(self):
         """Close HTTP client"""

@@ -99,9 +99,10 @@ def parse_handoff_from_response(
     if not response_text:
         return HandoffResult(action=HandoffAction.COMPLETE)
 
+    # Search the last 500 characters for directives to avoid scanning huge responses
     tail = response_text[-500:]
 
-    # Check for HANDOFF directive
+    # Check for HANDOFF directive in tail
     match = _HANDOFF_RE.search(tail)
     if match:
         target = match.group(1).strip()
@@ -120,8 +121,9 @@ def parse_handoff_from_response(
                 reason=f"Unknown target agent: {target}",
             )
 
-        # Text before the directive is context for the next agent
-        directive_start = response_text.rfind("[HANDOFF:")
+        # Compute directive position relative to full text
+        tail_offset = max(0, len(response_text) - 500)
+        directive_start = tail_offset + match.start()
         context = response_text[:directive_start].rstrip() if directive_start > 0 else ""
 
         return HandoffResult(

@@ -63,7 +63,7 @@ class ModelClient:
     def __init__(
         self,
         config: Optional[ModelConfig] = None,
-        isa_url: str = None,  # Legacy parameter for backward compatibility
+        isa_url: Optional[str] = None,  # Legacy parameter for backward compatibility
     ):
         # Handle legacy initialization
         if config is None:
@@ -799,7 +799,15 @@ class ModelClient:
 
 # Global singleton for performance (backward compatible)
 _model_client: Optional[ModelClient] = None
-_client_lock = asyncio.Lock()
+_client_lock: Optional[asyncio.Lock] = None
+
+
+def _get_client_lock() -> asyncio.Lock:
+    """Lazily create the asyncio lock on first use (requires running event loop)."""
+    global _client_lock
+    if _client_lock is None:
+        _client_lock = asyncio.Lock()
+    return _client_lock
 
 
 async def get_model_client(
@@ -810,7 +818,7 @@ async def get_model_client(
     global _model_client
 
     if _model_client is None:
-        async with _client_lock:
+        async with _get_client_lock():
             if _model_client is None:
                 logger.info(f"Creating ModelClient singleton | isa_url={isa_url} | has_config={config is not None}")
                 if config:

@@ -20,7 +20,8 @@ Example:
         "required": ["expression"]
     })
     async def calculate(expression: str) -> dict:
-        result = eval(expression)  # Note: use safe eval in production
+        import ast
+        result = ast.literal_eval(expression)  # Safe: only evaluates literals
         return {"result": result, "expression": expression}
 
     # Create SDK MCP server with your tools
