@@ -14,6 +14,9 @@ A complete AI Agent SDK for building intelligent agents with advanced features. 
 - **Event Triggers** - Proactive agent activation
 - **Multiple Execution Modes** - Reactive, Collaborative, Proactive
 - **A2A Ready** - Agent Card + JSON-RPC client/server adapters
+- **Multi-Agent Swarm** - Dynamic agent handoffs with `[HANDOFF:]` directives
+- **DAG Task Execution** - Dependency-ordered workflows with parallel wavefronts
+- **234 Tests** - Comprehensive test coverage including audit validation
 
 ## Installation
 

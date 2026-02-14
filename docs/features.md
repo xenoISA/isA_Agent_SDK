@@ -1,6 +1,6 @@
 # Features
 
-## Features
+## Core Features
 
 - **Claude Agent SDK Compatible** - Familiar API patterns
 - **Streaming Messages** - Real-time response streaming
@@ -12,6 +12,31 @@
 - **Event Triggers** - Proactive agent activation
 - **Multiple Execution Modes** - Reactive, Collaborative, Proactive
 - **A2A Ready** - Agent Card + JSON-RPC client/server adapters
+
+## Multi-Agent Features
+
+### Swarm Orchestration
+- **Dynamic Handoffs** - Agents decide when to hand off control via `[HANDOFF: agent_name]` directives
+- **Streaming Events** - Track agent transitions with `swarm_agent_start` and `swarm_handoff` events
+- **Handoff Trace** - Complete audit trail of agent handoffs
+- **Max Handoffs Safety** - Configurable limit prevents infinite loops
+- **Shared State** - State accumulates across agent handoffs
+- See [Swarm Orchestration](./swarm.md) for details
+
+### DAG Task Execution
+- **Dependency Ordering** - Tasks specify `depends_on` for execution order
+- **Wavefront Parallelism** - Independent tasks in same wavefront run concurrently
+- **Cycle Detection** - Kahn's algorithm validates DAG structure
+- **Failure Cascade** - Failed tasks automatically mark dependents as SKIPPED
+- **Multi-Agent DAGs** - Different agents execute different tasks in parallel
+- **Task Status Tracking** - PENDING, READY, RUNNING, COMPLETED, FAILED, SKIPPED
+- See [DAG Scheduler](../isa_agent_sdk/dag/scheduler.py) for implementation
+
+### MultiAgent Orchestrator
+- **Fixed Routing** - Explicit router function controls agent transitions
+- **Shared State** - Mutable state passed across agents
+- **Per-Agent Config** - Each agent has its own skills, tools, and options
+- See [Multi-Agent](./multi-agent.md) for details
 
 ## Advanced Features
 
