@@ -188,7 +188,8 @@ class DAGScheduler:
         dag.failed_count += 1
 
         # Cascade: skip all transitive dependents
-        to_skip = deque(_direct_dependents(dag, task_id))
+        # Uses dag.get_dependents() which caches reverse index for O(1) lookups
+        to_skip = deque(dag.get_dependents(task_id))
         visited: Set[str] = set()
 
         while to_skip:
@@ -206,7 +207,7 @@ class DAGScheduler:
                 dep_task.error = f"Skipped: upstream task '{task_id}' failed"
                 dag.skipped_count += 1
                 # Continue cascading
-                to_skip.extend(_direct_dependents(dag, dep_tid))
+                to_skip.extend(dag.get_dependents(dep_tid))
 
         return dag
 
@@ -220,10 +221,3 @@ class DAGScheduler:
         )
 
 
-def _direct_dependents(dag: DAGState, task_id: str) -> List[str]:
-    """Return task_ids that directly depend on the given task_id."""
-    return [
-        tid
-        for tid, task in dag.tasks.items()
-        if task_id in task.depends_on
-    ]
