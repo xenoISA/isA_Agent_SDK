@@ -310,12 +310,12 @@ class SessionService:
             try:
                 # Try ISO format first
                 return datetime.datetime.fromisoformat(dt_str.replace('Z', '+00:00'))
-            except:
+            except ValueError:
                 try:
                     # Try parsing common formats
                     return datetime.datetime.strptime(dt_str, "%Y-%m-%dT%H:%M:%S.%f")
-                except:
+                except ValueError:
                     pass
-        
+
         # Fallback to current time
         return datetime.datetime.now()

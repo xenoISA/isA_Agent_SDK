@@ -126,7 +126,8 @@ def setup_logger(
                     if self.client:
                         try:
                             self.client.__exit__(None, None, None)
-                        except:
+                        except Exception:
+                            # Silently ignore cleanup errors during shutdown
                             pass
                     super().close()
 

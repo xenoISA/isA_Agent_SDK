@@ -578,5 +578,6 @@ class SessionServiceCheckpointer(BaseCheckpointSaver):
         try:
             import asyncio
             asyncio.create_task(self.aclose())
-        except:
+        except RuntimeError:
+            # Event loop may not be running during interpreter shutdown
             pass
