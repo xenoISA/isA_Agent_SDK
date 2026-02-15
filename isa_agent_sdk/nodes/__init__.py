@@ -10,6 +10,15 @@ def __getattr__(name):
     if name == "BaseNode":
         from .base_node import BaseNode
         return BaseNode
+    elif name == "MinimalBaseNode":
+        from .base_node import MinimalBaseNode
+        return MinimalBaseNode
+    elif name == "ToolExecutionNode":
+        from .base_node import ToolExecutionNode
+        return ToolExecutionNode
+    elif name == "ReasoningNode":
+        from .base_node import ReasoningNode
+        return ReasoningNode
     elif name == "SenseNode":
         from .sense_node import SenseNode
         return SenseNode
@@ -34,7 +43,10 @@ def __getattr__(name):
     raise AttributeError(f"module 'isa_agent_sdk.nodes' has no attribute '{name}'")
 
 __all__ = [
-    "BaseNode",
+    "BaseNode",  # Deprecated - use MinimalBaseNode, ToolExecutionNode, or ReasoningNode
+    "MinimalBaseNode",
+    "ToolExecutionNode",
+    "ReasoningNode",
     "SenseNode",
     "ReasonNode",
     "ResponseNode",
