@@ -282,10 +282,31 @@ class ResponseNode(BaseNode):
             if not content:
                 continue
 
-            # Keep all user messages and assistant responses
-            role = "User" if msg_type == "HumanMessage" else "Assistant"
-            formatted_msg = f"{role}: {content}"
-            conversation_messages.append(formatted_msg)
+            # Handle different message types properly
+            if msg_type == "HumanMessage":
+                role = "User"
+                formatted_msg = f"{role}: {content}"
+                conversation_messages.append(formatted_msg)
+            elif msg_type == "AIMessage":
+                # Check if this is a tool call message (has tool_calls but no text content)
+                has_tool_calls = hasattr(msg, 'tool_calls') and msg.tool_calls
+                if has_tool_calls and not content.strip():
+                    # Skip AIMessages that only contain tool calls (not user-facing)
+                    continue
+                role = "Assistant"
+                formatted_msg = f"{role}: {content}"
+                conversation_messages.append(formatted_msg)
+            elif msg_type == "ToolMessage":
+                # Format tool results clearly so the model understands they're tool outputs
+                # Get tool name if available
+                tool_name = getattr(msg, 'name', 'unknown_tool')
+                formatted_msg = f"[Tool Result from {tool_name}]:\n{content}"
+                conversation_messages.append(formatted_msg)
+            else:
+                # Default to Assistant for any other message type
+                role = "Assistant"
+                formatted_msg = f"{role}: {content}"
+                conversation_messages.append(formatted_msg)
 
         # Use last 10 non-internal messages for context (prevents token overflow)
         conversation_text = "\n\n".join(conversation_messages[-10:])

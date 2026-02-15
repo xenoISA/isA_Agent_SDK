@@ -108,7 +108,8 @@ class ToolNode(BaseNode):
                 return {
                     "messages": [ToolMessage(
                         content="Tool authorization denied by user",
-                        tool_call_id=tool_info_list[0][2]
+                        tool_call_id=tool_info_list[0][2],
+                        name=tool_info_list[0][0]  # Add tool name
                     )],
                     "next_action": "end"
                 }
@@ -124,7 +125,8 @@ class ToolNode(BaseNode):
                 job_result = await self._queue_background_job(tool_info_list, state, config)
                 tool_messages = [ToolMessage(
                     content=json.dumps(job_result),
-                    tool_call_id=tool_info_list[0][2]  # Use first tool's call_id
+                    tool_call_id=tool_info_list[0][2],  # Use first tool's call_id
+                    name=tool_info_list[0][0]  # Add tool name
                 )]
                 return {
                     "messages": tool_messages,
@@ -255,7 +257,8 @@ class ToolNode(BaseNode):
                 # Create error tool message
                 error_message = ToolMessage(
                     content=error_msg,
-                    tool_call_id=tool_call_id
+                    tool_call_id=tool_call_id,
+                    name=tool_name  # Add tool name for better context
                 )
                 tool_messages.append(error_message)
                 self.stream_tool(tool_name, f"Failed - {str(e)}")
@@ -290,10 +293,11 @@ class ToolNode(BaseNode):
             # Process normal tool results (only reached if no HIL interrupt)
             # All HIL responses (including plan reviews) are handled by the HIL detector above
             try:
-                # Create tool message
+                # Create tool message with tool name for better context
                 tool_message = ToolMessage(
                     content=str(result),
-                    tool_call_id=tool_call_id
+                    tool_call_id=tool_call_id,
+                    name=tool_name  # Add tool name for response node context
                 )
                 tool_messages.append(tool_message)
                 
@@ -315,7 +319,8 @@ class ToolNode(BaseNode):
                 # Create error tool message
                 error_message = ToolMessage(
                     content=error_msg,
-                    tool_call_id=tool_call_id
+                    tool_call_id=tool_call_id,
+                    name=tool_name  # Add tool name for better context
                 )
                 tool_messages.append(error_message)
                 
