@@ -372,10 +372,15 @@ class SwarmOrchestrator:
                 swarm_agent = self._agents[agent_name]
                 for task_id in task_ids:
                     dag_task = dag.tasks[task_id]
-                    dag_task.status = _dag_running_status()
+
+                    # Read task_results snapshot under lock for building prompt
+                    # Also update status under lock to prevent race conditions
+                    async with _state_lock:
+                        dag_task.status = _dag_running_status()
+                        task_results_snapshot = dict(task_results)
 
                     task_prompt = self._build_dag_task_prompt(
-                        dag_task, task_results,
+                        dag_task, task_results_snapshot,
                     )
 
                     try:
