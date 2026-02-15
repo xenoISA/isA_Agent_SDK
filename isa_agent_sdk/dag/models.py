@@ -82,6 +82,26 @@ class DAGState:
     completed_count: int = 0
     failed_count: int = 0
     skipped_count: int = 0
+    _dependents_cache: Optional[Dict[str, List[str]]] = field(default=None, repr=False)
+
+    def get_dependents(self, task_id: str) -> List[str]:
+        """Return task_ids that directly depend on the given task_id.
+
+        Builds a reverse index on first access (O(n) once), then returns
+        cached results in O(1) for subsequent calls.
+        """
+        if self._dependents_cache is None:
+            # Build reverse index: task_id -> list of tasks that depend on it
+            self._dependents_cache = {tid: [] for tid in self.tasks}
+            for tid, task in self.tasks.items():
+                for dep_id in task.depends_on:
+                    if dep_id in self._dependents_cache:
+                        self._dependents_cache[dep_id].append(tid)
+        return self._dependents_cache.get(task_id, [])
+
+    def invalidate_dependents_cache(self) -> None:
+        """Invalidate the dependents cache (call when task graph changes)."""
+        self._dependents_cache = None
 
     def to_dict(self) -> Dict[str, Any]:
         return {
