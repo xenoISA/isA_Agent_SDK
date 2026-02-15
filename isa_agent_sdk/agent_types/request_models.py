@@ -6,7 +6,7 @@ Request Models for SmartAgent v3.0 API
 
 from datetime import datetime
 from typing import Dict, List, Any, Optional, Union
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, field_validator
 from fastapi import UploadFile
 
 from .common_types import (
@@ -23,12 +23,14 @@ class BaseRequest(BaseTimestamped):
     user_id: str = Field(default="anonymous", description="用户ID")
     session_id: Optional[str] = Field(default=None, description="会话ID")
     metadata: MetadataType = Field(default_factory=dict, description="元数据")
-    
-    @validator('user_id', pre=True)
+
+    @field_validator('user_id', mode='before')
+    @classmethod
     def validate_user_id_field(cls, v):
         return validate_user_id(v)
-    
-    @validator('session_id', pre=True)
+
+    @field_validator('session_id', mode='before')
+    @classmethod
     def validate_session_id_field(cls, v):
         return validate_session_id(v) if v else None
 
@@ -48,8 +50,9 @@ class ChatRequest(BaseConfigurableRequest):
     message: Union[str, MessageContent] = Field(..., description="消息内容")
     context: Optional[Dict[str, Any]] = Field(default=None, description="上下文信息")
     execution_strategy: Optional[ExecutionStrategy] = Field(default=None, description="执行策略")
-    
-    @validator('message', pre=True)
+
+    @field_validator('message', mode='before')
+    @classmethod
     def validate_message(cls, v):
         if isinstance(v, str):
             return MessageContent(text=v)
@@ -73,12 +76,13 @@ class MultimodalChatRequest(BaseConfigurableRequest):
     files: List[FileInfo] = Field(default_factory=list, description="文件信息列表")
     audio: Optional[AudioInfo] = Field(default=None, description="音频信息")
     context: Optional[Dict[str, Any]] = Field(default=None, description="上下文信息")
-    
-    @validator('files', pre=True)
+
+    @field_validator('files', mode='before')
+    @classmethod
     def validate_files(cls, v):
         if not v:
             return []
-        
+
         result = []
         for item in v:
             if isinstance(item, FileInfo):
@@ -170,8 +174,9 @@ class StreamingChatRequest(MultimodalChatRequest):
 class SessionRequest(BaseRequest):
     """会话请求模型"""
     action: str = Field(..., description="操作类型: create, get, update, delete, clear")
-    
-    @validator('action')
+
+    @field_validator('action')
+    @classmethod
     def validate_action(cls, v):
         allowed_actions = ['create', 'get', 'update', 'delete', 'clear', 'list']
         if v not in allowed_actions:

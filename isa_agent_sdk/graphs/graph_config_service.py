@@ -11,7 +11,7 @@ import logging
 import base64
 from datetime import datetime
 from typing import Dict, Any, Optional, List, AsyncIterator
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, field_validator
 from enum import Enum
 
 from .smart_agent_graph import SmartAgentGraphBuilder
@@ -65,7 +65,8 @@ class GraphBuilderConfig(BaseModel):
     created_at: Optional[datetime] = Field(default_factory=datetime.now)
     updated_at: Optional[datetime] = Field(default_factory=datetime.now)
     
-    @validator('confidence_threshold')
+    @field_validator('confidence_threshold')
+    @classmethod
     def validate_confidence_threshold(cls, v):
         if not 0.0 <= v <= 1.0:
             raise ValueError('Confidence threshold must be between 0.0 and 1.0')

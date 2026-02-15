@@ -9,7 +9,7 @@ Categories: session, node, content, tool, task, hil, system
 from enum import Enum
 from typing import Dict, Any, Optional
 from datetime import datetime
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 
 class EventCategory(str, Enum):
@@ -108,14 +108,13 @@ class EventType(str, Enum):
 
 class EventData(BaseModel):
     """Standard event data structure"""
+    model_config = ConfigDict(use_enum_values=True)
+
     type: str                               # Event type (category.action)
     session_id: str                         # Session identifier
     timestamp: str                          # ISO format timestamp
     content: Optional[str] = None          # Main content/message
     metadata: Optional[Dict[str, Any]] = None  # Additional metadata
-    
-    class Config:
-        use_enum_values = True
     
     @classmethod
     def create(
