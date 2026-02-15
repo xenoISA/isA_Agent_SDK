@@ -47,6 +47,9 @@ from ._structured import (
     parse_structured_output,
 )
 
+# Constants
+MAX_RESPONSE_SIZE = 100_000  # 100KB limit for response content parts to prevent memory exhaustion
+
 # Setup logging
 logger = logging.getLogger(__name__)
 
@@ -530,6 +533,8 @@ class QueryExecutor:
 
             # Track response content for memory storage
             response_content_parts = []
+            response_size = 0  # Track total size to prevent unbounded growth
+            response_truncated = False  # Flag to log truncation warning once
 
             stream_processor = StreamProcessor(logger=logger)
 
@@ -559,18 +564,40 @@ class QueryExecutor:
                         event_counts['thinking'] += 1
                     elif msg.is_text:
                         event_counts['token'] += 1
-                        # Collect text content for memory storage
-                        if msg.content:
-                            response_content_parts.append(msg.content)
+                        # Collect text content for memory storage with size limit
+                        if msg.content and not response_truncated:
+                            content_size = len(msg.content)
+                            if response_size + content_size <= MAX_RESPONSE_SIZE:
+                                response_content_parts.append(msg.content)
+                                response_size += content_size
+                            else:
+                                # Truncate and log warning
+                                logger.warning(
+                                    f"[SDK] Response truncated at {MAX_RESPONSE_SIZE} bytes | "
+                                    f"session_id={session_id} | "
+                                    f"This prevents memory exhaustion in long conversations"
+                                )
+                                response_truncated = True
                     elif msg.is_tool_use:
                         event_counts['tool_use'] += 1
                     elif msg.is_tool_result:
                         event_counts['tool_result'] += 1
                     elif msg.is_complete:
                         event_counts['complete'] += 1
-                        # Complete message often contains final response
-                        if msg.content:
-                            response_content_parts.append(msg.content)
+                        # Complete message often contains final response, check size limit
+                        if msg.content and not response_truncated:
+                            content_size = len(msg.content)
+                            if response_size + content_size <= MAX_RESPONSE_SIZE:
+                                response_content_parts.append(msg.content)
+                                response_size += content_size
+                            else:
+                                # Already logged warning if we hit this, just skip
+                                if not response_truncated:
+                                    logger.warning(
+                                        f"[SDK] Response truncated at {MAX_RESPONSE_SIZE} bytes | "
+                                        f"session_id={session_id}"
+                                    )
+                                response_truncated = True
 
                     yield msg
 
