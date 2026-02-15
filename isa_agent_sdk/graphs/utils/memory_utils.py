@@ -604,7 +604,8 @@ async def store_conversation_memories(
                 elif isinstance(result["result"], str) and "success" in result["result"].lower():
                     # Fallback for simple string responses
                     successful_tools.append(result["tool"])
-            except:
+            except (KeyError, TypeError, AttributeError):
+                # Skip malformed results - not critical for memory storage tracking
                 pass
         
         logger.info(f"Stored conversation memories for user {user_id}, session {session_id}")

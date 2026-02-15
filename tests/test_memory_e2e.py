@@ -566,7 +566,8 @@ async def test_memory_aggregator() -> TestResult:
         if mcp:
             try:
                 await mcp.close()
-            except:
+            except Exception:
+                # Silently ignore cleanup errors during test teardown
                 pass
 
     result.duration_ms = int((time.time() - start) * 1000)
