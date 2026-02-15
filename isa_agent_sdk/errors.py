@@ -20,7 +20,7 @@ Example:
         print(f"SDK error: {e}")
 """
 
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 
 
 # ============================================================================
@@ -252,6 +252,53 @@ class GraphExecutionError(ExecutionError):
         self.details["node"] = node
 
 
+class StreamProcessingError(ExecutionError):
+    """
+    Stream processing failed.
+
+    Raised when:
+    - Stream iteration fails
+    - Async generator breaks
+    - Stream timeout occurs
+    """
+
+    def __init__(
+        self,
+        message: str,
+        stream_type: Optional[str] = None,
+        session_id: Optional[str] = None,
+        **kwargs
+    ):
+        super().__init__(message, session_id=session_id, **kwargs)
+        self.stream_type = stream_type
+        self.details["stream_type"] = stream_type
+
+
+class SwarmHandoffError(ExecutionError):
+    """
+    Swarm agent handoff failed.
+
+    Raised when:
+    - Agent handoff fails
+    - Target agent not found
+    - Handoff state transfer fails
+    """
+
+    def __init__(
+        self,
+        message: str,
+        source_agent: Optional[str] = None,
+        target_agent: Optional[str] = None,
+        session_id: Optional[str] = None,
+        **kwargs
+    ):
+        super().__init__(message, session_id=session_id, **kwargs)
+        self.source_agent = source_agent
+        self.target_agent = target_agent
+        self.details["source_agent"] = source_agent
+        self.details["target_agent"] = target_agent
+
+
 # ============================================================================
 # Session & State Errors
 # ============================================================================
@@ -324,6 +371,29 @@ class CheckpointError(SessionError):
         self.details["checkpoint_id"] = checkpoint_id
 
 
+class CheckpointSerializationError(CheckpointError):
+    """
+    Checkpoint serialization/deserialization failed.
+
+    Raised when:
+    - State cannot be serialized to JSON
+    - Checkpoint data is corrupted
+    - Deserialization type mismatch
+    """
+
+    def __init__(
+        self,
+        message: str,
+        operation: Optional[str] = None,  # "serialize" or "deserialize"
+        session_id: Optional[str] = None,
+        checkpoint_id: Optional[str] = None,
+        **kwargs
+    ):
+        super().__init__(message, session_id=session_id, checkpoint_id=checkpoint_id, **kwargs)
+        self.operation = operation
+        self.details["operation"] = operation
+
+
 class ResumeError(SessionError):
     """
     Failed to resume session.
@@ -379,6 +449,30 @@ class SchemaError(ISAValidationError):
         self.schema = schema
         self.errors = errors or []
         self.details["errors"] = self.errors
+
+
+class DAGValidationError(ISAValidationError):
+    """
+    DAG validation failed.
+
+    Raised when:
+    - Circular dependency detected
+    - Invalid task dependencies
+    - DAG structure is malformed
+    """
+
+    def __init__(
+        self,
+        message: str,
+        dag_id: Optional[str] = None,
+        invalid_edges: Optional[List[str]] = None,
+        **kwargs
+    ):
+        super().__init__(message, **kwargs)
+        self.dag_id = dag_id
+        self.invalid_edges = invalid_edges or []
+        self.details["dag_id"] = dag_id
+        self.details["invalid_edges"] = self.invalid_edges
 
 
 class ConfigurationError(ISAValidationError):
@@ -540,17 +634,21 @@ __all__ = [
     "ModelError",
     "MaxIterationsError",
     "GraphExecutionError",
+    "StreamProcessingError",
+    "SwarmHandoffError",
 
     # Session & State
     "SessionError",
     "SessionNotFoundError",
     "SessionExpiredError",
     "CheckpointError",
+    "CheckpointSerializationError",
     "ResumeError",
 
     # Validation
     "ISAValidationError",
     "SchemaError",
+    "DAGValidationError",
     "ConfigurationError",
 
     # Permission & Authorization
