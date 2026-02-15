@@ -126,6 +126,16 @@ class MCPClient:
             await self._client.close()
             self.logger.info("MCPClient closed", extra={'metrics': self.metrics})
 
+    async def __aenter__(self):
+        """Async context manager entry - initializes the client."""
+        await self.initialize()
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        """Async context manager exit - guaranteed cleanup."""
+        await self.close()
+        return False  # Don't suppress exceptions
+
     # =========================================================================
     # Core MCP Operations (delegated to isa_mcp)
     # =========================================================================

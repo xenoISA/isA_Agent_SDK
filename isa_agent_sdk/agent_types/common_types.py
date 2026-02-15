@@ -5,10 +5,13 @@ Common types and enums for SmartAgent v3.0
 """
 
 from datetime import datetime
-from typing import Dict, List, Any, Optional, Union, Literal
+from typing import Dict, List, Any, Optional, Union, Literal, Annotated
 from enum import Enum
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, field_validator, model_validator, ConfigDict, PlainSerializer
 import uuid
+
+# Custom type for ISO datetime serialization
+ISODatetime = Annotated[datetime, PlainSerializer(lambda v: v.isoformat(), return_type=str)]
 
 
 # ==================== Enums ====================
@@ -126,12 +129,7 @@ class FileType(str, Enum):
 
 class BaseTimestamped(BaseModel):
     """带时间戳的基础模型"""
-    timestamp: datetime = Field(default_factory=datetime.now)
-    
-    class Config:
-        json_encoders = {
-            datetime: lambda v: v.isoformat()
-        }
+    timestamp: ISODatetime = Field(default_factory=datetime.now)
 
 
 class BaseIdentified(BaseTimestamped):
@@ -146,28 +144,31 @@ class FileInfo(BaseModel):
     filename: str
     content_type: str
     size: int
-    file_type: FileType
+    file_type: Optional[FileType] = None
     description: Optional[str] = None
     metadata: Dict[str, Any] = Field(default_factory=dict)
-    
-    @validator('file_type', pre=True, always=True)
-    def determine_file_type(cls, v, values):
-        if v:
-            return v
-        
-        content_type = values.get('content_type', '')
-        if content_type.startswith('image/'):
-            return FileType.IMAGE
-        elif content_type.startswith('audio/'):
-            return FileType.AUDIO
-        elif content_type.startswith('video/'):
-            return FileType.VIDEO
-        elif content_type.startswith('text/'):
-            return FileType.TEXT
-        elif content_type in ['application/pdf', 'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document']:
-            return FileType.DOCUMENT
-        else:
-            return FileType.OTHER
+
+    @model_validator(mode='before')
+    @classmethod
+    def determine_file_type(cls, data):
+        if isinstance(data, dict):
+            if data.get('file_type'):
+                return data
+
+            content_type = data.get('content_type', '')
+            if content_type.startswith('image/'):
+                data['file_type'] = FileType.IMAGE
+            elif content_type.startswith('audio/'):
+                data['file_type'] = FileType.AUDIO
+            elif content_type.startswith('video/'):
+                data['file_type'] = FileType.VIDEO
+            elif content_type.startswith('text/'):
+                data['file_type'] = FileType.TEXT
+            elif content_type in ['application/pdf', 'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document']:
+                data['file_type'] = FileType.DOCUMENT
+            else:
+                data['file_type'] = FileType.OTHER
+        return data
 
 
 class AudioInfo(BaseModel):
@@ -246,8 +247,9 @@ class MessageContent(BaseModel):
     files: List[FileInfo] = Field(default_factory=list)
     audio: Optional[AudioInfo] = None
     metadata: Dict[str, Any] = Field(default_factory=dict)
-    
-    @validator('text', pre=True)
+
+    @field_validator('text', mode='before')
+    @classmethod
     def validate_text(cls, v):
         if v is not None and not isinstance(v, str):
             return str(v)

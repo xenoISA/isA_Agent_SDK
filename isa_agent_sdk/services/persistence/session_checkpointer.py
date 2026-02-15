@@ -276,14 +276,23 @@ class SessionServiceCheckpointer(BaseCheckpointSaver):
             return None
 
     def get_tuple(self, config: RunnableConfig) -> Optional[CheckpointTuple]:
-        """同步版本（兼容性）"""
+        """Sync version with proper async context detection.
+
+        Raises:
+            RuntimeError: If called from an async context.
+        """
         import asyncio
+        # Detect already-running event loop (e.g., called from async context)
         try:
-            return asyncio.run(self.aget_tuple(config))
-        except RuntimeError:
-            # 如果已经在事件循环中
-            loop = asyncio.get_event_loop()
-            return loop.run_until_complete(self.aget_tuple(config))
+            asyncio.get_running_loop()
+            raise RuntimeError(
+                "get_tuple() cannot be called from an async context. "
+                "Use aget_tuple() instead."
+            )
+        except RuntimeError as e:
+            if "no current event loop" not in str(e).lower() and "no running event loop" not in str(e).lower():
+                raise
+        return asyncio.run(self.aget_tuple(config))
 
     async def aput(
         self,
@@ -400,13 +409,23 @@ class SessionServiceCheckpointer(BaseCheckpointSaver):
         metadata: CheckpointMetadata,
         new_versions: ChannelVersions,
     ) -> RunnableConfig:
-        """同步版本（兼容性）"""
+        """Sync version with proper async context detection.
+
+        Raises:
+            RuntimeError: If called from an async context.
+        """
         import asyncio
+        # Detect already-running event loop (e.g., called from async context)
         try:
-            return asyncio.run(self.aput(config, checkpoint, metadata, new_versions))
-        except RuntimeError:
-            loop = asyncio.get_event_loop()
-            return loop.run_until_complete(self.aput(config, checkpoint, metadata, new_versions))
+            asyncio.get_running_loop()
+            raise RuntimeError(
+                "put() cannot be called from an async context. "
+                "Use aput() instead."
+            )
+        except RuntimeError as e:
+            if "no current event loop" not in str(e).lower() and "no running event loop" not in str(e).lower():
+                raise
+        return asyncio.run(self.aput(config, checkpoint, metadata, new_versions))
 
     async def alist(
         self,
@@ -524,13 +543,23 @@ class SessionServiceCheckpointer(BaseCheckpointSaver):
         before: Optional[RunnableConfig] = None,
         limit: Optional[int] = None,
     ) -> Iterator[CheckpointTuple]:
-        """同步版本（兼容性）"""
+        """Sync version with proper async context detection.
+
+        Raises:
+            RuntimeError: If called from an async context.
+        """
         import asyncio
+        # Detect already-running event loop (e.g., called from async context)
         try:
-            checkpoints = asyncio.run(self.alist(config, filter=filter, before=before, limit=limit))
-        except RuntimeError:
-            loop = asyncio.get_event_loop()
-            checkpoints = loop.run_until_complete(self.alist(config, filter=filter, before=before, limit=limit))
+            asyncio.get_running_loop()
+            raise RuntimeError(
+                "list() cannot be called from an async context. "
+                "Use alist() instead."
+            )
+        except RuntimeError as e:
+            if "no current event loop" not in str(e).lower() and "no running event loop" not in str(e).lower():
+                raise
+        checkpoints = asyncio.run(self.alist(config, filter=filter, before=before, limit=limit))
         return iter(checkpoints)
 
     async def aput_writes(
@@ -569,15 +598,15 @@ class SessionServiceCheckpointer(BaseCheckpointSaver):
         pass
 
     async def aclose(self):
-        """清理资源"""
+        """Clean up resources (async HTTP client)."""
         await self.client.aclose()
-        api_logger.info("✅ SessionServiceCheckpointer closed")
+        api_logger.info("SessionServiceCheckpointer closed")
 
-    def __del__(self):
-        """析构时清理"""
-        try:
-            import asyncio
-            asyncio.create_task(self.aclose())
-        except RuntimeError:
-            # Event loop may not be running during interpreter shutdown
-            pass
+    async def __aenter__(self):
+        """Async context manager entry."""
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        """Async context manager exit - guaranteed cleanup."""
+        await self.aclose()
+        return False  # Don't suppress exceptions
